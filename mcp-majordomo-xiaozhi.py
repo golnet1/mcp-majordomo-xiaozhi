@@ -1,0 +1,436 @@
+#!/usr/bin/env python3
+"""
+Универсальный MCP-сервер для MajorDoMo + xiaozhi
+С поддержкой дублирующихся алиасов (например, "комната отдыха" в освещении и колонках).
+Все действия логируются в единый файл /opt/mcp-bridge/logs/actions.log
+"""
+
+import sys
+import os
+import json
+import logging
+import re
+import requests
+from mcp.server.fastmcp import FastMCP
+
+# === Настройка ===
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper())
+logging.basicConfig(stream=sys.stderr, level=log_level, format="%(levelname)s: %(message)s")
+logger = logging.getLogger("mcp_majordomo")
+
+MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://192.168.88.2")
+ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
+
+# === Импорт единого логгера ===
+sys.path.append("/opt/mcp-bridge")
+try:
+    from action_logger import log_action
+except ImportError:
+    logger.error("Не удалось импортировать action_logger. Логирование отключено.")
+    def log_action(*args, **kwargs):
+        pass  # Заглушка, если логгер недоступен
+
+# === Загрузка алиасов (с поддержкой дубликатов) ===
+def load_aliases():
+    """
+    Загружает алиасы и раскрывает составные ключи (через запятую).
+    Поддерживает дублирующиеся имена в разных категориях.
+    Возвращает: {"улица": [spec1], "комната отдыха": [spec_освещение, spec_колонки]}
+    """
+    if not os.path.exists(ALIASES_FILE):
+        return {}
+
+    try:
+        with open(ALIASES_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        aliases = {}
+        for category, devices in raw.items():
+            for key, spec in devices.items():
+                names = [name.strip().lower() for name in key.split(",")]
+                for name in names:
+                    if name:
+                        if name not in aliases:
+                            aliases[name] = []
+                        aliases[name].append({
+                            "object": spec["object"],
+                            "property": spec["property"],
+                            "category": category
+                        })
+        return aliases
+    except Exception as e:
+        logger.error(f"Ошибка загрузки алиасов: {e}")
+        return {}
+
+# === MajorDoMo API (с поддержкой params) ===
+def call_majordomo(method: str, path: str, data=None, params=None):
+    url = f"{MAJORDOMO_URL}/api/{path}"
+    try:
+        if method == "POST":
+            if isinstance(data, dict):
+                resp = requests.post(url, json=data, params=params, timeout=15)
+            else:
+                resp = requests.post(url, data=data, params=params, timeout=15)
+        else:
+            resp = requests.get(url, params=params, timeout=15)
+        return resp
+    except Exception as e:
+        logger.error(f"Majordomo API error: {e}")
+        return None
+
+# === Нормализация запросов ===
+def normalize_query(query: str) -> str:
+    query = query.lower().strip()
+    patterns = [
+        r'^(свет|освещение|статус)\s+(на|в)\s+',
+        r'^(температура|влажность)\s+(в|на)\s+',
+        r'^(свет|освещение|статус|температура|влажность)\s*',
+        r'^(на|в)\s+'
+    ]
+    for pat in patterns:
+        query = re.sub(pat, '', query)
+    if query.endswith('е'): query = query[:-1]
+    if query.endswith('у'): query = query[:-1]
+    if query.endswith('ом'): query = query[:-2]
+    return query.strip()
+
+# === Поиск устройства с учётом категории ===
+def find_device_by_category(alias_name: str, preferred_categories: list = None):
+    """
+    Находит устройство по имени и предпочтительным категориям.
+    Возвращает первую подходящую спецификацию или любую, если категории не заданы.
+    """
+    aliases = load_aliases()
+    if alias_name not in aliases:
+        return None
+    
+    specs = aliases[alias_name]
+    
+    if preferred_categories:
+        for spec in specs:
+            if spec["category"] in preferred_categories:
+                return spec
+    
+    # Если не нашли по категориям — возвращаем первую
+    return specs[0] if specs else None
+
+# === TTS (ищет только в категории "колонки") ===
+def say_via_tts(text: str, room: str = "комната отдыха") -> bool:
+    """Озвучивает текст через колонку в указанной комнате."""
+    alias_name = normalize_query(room)
+    device_spec = find_device_by_category(alias_name, preferred_categories=["колонки"])
+    
+    if not device_spec:
+        logger.warning(f"Колонка не найдена для комнаты: {room}")
+        return False
+    
+    resp = call_majordomo("GET", f"method/{device_spec['object']}.say", params={"text": text})
+    return resp is not None and resp.status_code == 200
+
+# === MCP-сервер ===
+mcp = FastMCP("Majordomo Universal")
+
+# === СТАРЫЕ МЕТОДЫ (с поддержкой дубликатов и логированием) ===
+
+@mcp.tool()
+def get_property(object: str, property: str) -> dict:
+    """Технический метод: получить свойство по object.property"""
+    path = f"data/{object}.{property}"
+    resp = call_majordomo("GET", path)
+    if resp and resp.status_code == 200:
+        try:
+            value = resp.json().get("data", resp.text.strip())
+        except:
+            value = resp.text.strip()
+        return {"value": value}
+    return {"error": f"Ошибка: {resp.status_code if resp else 'timeout'}"}
+
+@mcp.tool()
+def set_property(object: str, property: str, value: str) -> dict:
+    """Технический метод: установить свойство"""
+    path = f"data/{object}.{property}"
+    payload = {"data": str(value)}
+    resp = call_majordomo("POST", path, data=payload)
+    if resp and resp.status_code == 200:
+        return {"success": True}
+    return {"error": f"MajorDoMo вернул статус {resp.status_code if resp else 'N/A'}"}
+
+@mcp.tool()
+def set_device(device_name: str, state: str) -> dict:
+    """Человекочитаемое управление с нормализацией и поддержкой дубликатов"""
+    norm_name = normalize_query(device_name)
+    device_spec = find_device_by_category(
+        norm_name, 
+        preferred_categories=["освещение", "устройства"]
+    )
+    
+    if not device_spec:
+        aliases = load_aliases()
+        available = ", ".join(aliases.keys())
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=device_name,
+            success=False,
+            details={"error": "Устройство не найдено", "available": available}
+        )
+        return {"error": f"Устройство '{device_name}' не найдено. Доступные: {available}"}
+    
+    value = "1" if state.lower() in ("включи", "включить", "on", "1", "да") else "0"
+    result = set_property(device_spec["object"], device_spec["property"], value)
+    
+    if "success" in result:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=norm_name,
+            success=True,
+            details={"state": "включено" if value == "1" else "выключено"}
+        )
+    else:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=norm_name,
+            success=False,
+            details={"error": result.get("error", "Unknown error")}
+        )
+    
+    return result
+
+@mcp.tool()
+def get_device(device_name: str) -> dict:
+    """Человекочитаемый статус с нормализацией и поддержкой дубликатов"""
+    norm_name = normalize_query(device_name)
+    device_spec = find_device_by_category(
+        norm_name, 
+        preferred_categories=["освещение", "устройства"]
+    )
+    
+    if not device_spec:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device",
+            target=device_name,
+            success=False,
+            details={"error": "Устройство не найдено"}
+        )
+        return {"error": f"Устройство '{device_name}' не найдено."}
+    
+    result = get_property(device_spec["object"], device_spec["property"])
+    if "error" in result:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device",
+            target=norm_name,
+            success=False,
+            details={"error": result["error"]}
+        )
+        return result
+    
+    status = "включено" if result["value"] == "1" else "выключено"
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="get_device",
+        target=norm_name,
+        success=True,
+        details={"status": status, "raw_value": result["value"]}
+    )
+    return {"device": device_name, "status": status, "raw_value": result["value"]}
+
+@mcp.tool()
+def list_devices() -> dict:
+    """Список всех устройств"""
+    aliases = load_aliases()
+    return {"devices": list(aliases.keys())}
+
+@mcp.tool()
+def list_rooms() -> dict:
+    """Список комнат из MajorDoMo"""
+    resp = call_majordomo("GET", "rooms")
+    if resp and resp.status_code == 200:
+        try:
+            return {"rooms": resp.json()}
+        except:
+            return {"error": "Invalid JSON response"}
+    return {"error": f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"}
+
+@mcp.tool()
+def get_room(room_id: str) -> dict:
+    """Детали комнаты по ID"""
+    resp = call_majordomo("GET", f"rooms/{room_id}")
+    if resp and resp.status_code == 200:
+        try:
+            return {"room": resp.json()}
+        except:
+            return {"error": "Invalid JSON response"}
+    return {"error": f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"}
+
+# === НОВЫЕ МЕТОДЫ (с TTS, поддержкой дубликатов и логированием) ===
+
+@mcp.tool()
+def control_device(device_query: str, action: str, tts_feedback: bool = True) -> dict:
+    """Управление с TTS и поддержкой дублирующихся алиасов"""
+    norm_query = normalize_query(device_query)
+    logger.info(f"Запрос: '{device_query}' → нормализовано: '{norm_query}'")
+    
+    # Ищем устройство в категориях освещения/устройств
+    device_spec = find_device_by_category(
+        norm_query, 
+        preferred_categories=["освещение", "устройства"]
+    )
+    
+    if not device_spec:
+        # Формируем список ТОЛЬКО релевантных алиасов
+        aliases = load_aliases()
+        relevant_aliases = []
+        for alias_name, specs in aliases.items():
+            for spec in specs:
+                if spec["category"] in ["освещение", "устройства"]:
+                    relevant_aliases.append(alias_name)
+                    break
+        available = ", ".join(sorted(set(relevant_aliases)))
+        logger.info(f"Не найдено. Доступные: {available}")
+        
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=device_query,
+            success=False,
+            details={"error": "Устройство не найдено", "available": available}
+        )
+        return {"error": f"Не найдено: '{device_query}'. Доступные: {available}"}
+    
+    # Гибкая обработка действия
+    action_lower = action.lower()
+    if any(word in action_lower for word in ["включи", "включить", "on", "1", "да", "зажги", "активируй", "включи свет"]):
+        value = "1"
+        state_word = "включён"
+    elif any(word in action_lower for word in ["выключи", "выключить", "off", "0", "нет", "потуши", "деактивируй", "выключи свет"]):
+        value = "0"
+        state_word = "выключен"
+    else:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=device_query,
+            success=False,
+            details={"error": f"Неизвестное действие: '{action}'"}
+        )
+        return {"error": f"Неизвестное действие: '{action}'. Используйте 'включи' или 'выключи'."}
+    
+    # Выполнение команды
+    resp = call_majordomo("POST", f"data/{device_spec['object']}.{device_spec['property']}", data={"data": value})
+    if resp and resp.status_code == 200:
+        if tts_feedback:
+            say_via_tts(f"Свет в {norm_query} {state_word}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=norm_query,
+            success=True,
+            details={"state": state_word, "device_query": device_query, "action": action}
+        )
+        return {"success": True, "target": norm_query, "state": state_word}
+    else:
+        error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=norm_query,
+            success=False,
+            details={"error": error_msg, "device_query": device_query}
+        )
+        return {"error": error_msg}
+
+@mcp.tool()
+def get_device_status(device_query: str, tts_feedback: bool = True) -> dict:
+    """Статус с TTS и поддержкой дублирующихся алиасов"""
+    norm_query = normalize_query(device_query)
+    device_spec = find_device_by_category(
+        norm_query, 
+        preferred_categories=["освещение", "устройства"]
+    )
+    
+    if not device_spec:
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device_status",
+            target=device_query,
+            success=False,
+            details={"error": "Устройство не найдено"}
+        )
+        return {"error": f"Не найдено: '{device_query}'"}
+    
+    resp = call_majordomo("GET", f"data/{device_spec['object']}.{device_spec['property']}")
+    if resp and resp.status_code == 200:
+        try:
+            value = resp.json().get("data", resp.text.strip())
+        except:
+            value = resp.text.strip()
+        
+        status = "включено" if value == "1" else "выключено"
+        if tts_feedback:
+            say_via_tts(f"Свет в {norm_query} {status}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device_status",
+            target=norm_query,
+            success=True,
+            details={"status": status, "value": value, "device_query": device_query}
+        )
+        return {"device": norm_query, "status": status}
+    
+    error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="get_device_status",
+        target=norm_query,
+        success=False,
+        details={"error": error_msg, "device_query": device_query}
+    )
+    return {"error": error_msg}
+
+@mcp.tool()
+def run_script(script_name: str, tts_feedback: bool = True) -> dict:
+    """Запуск сценария"""
+    resp = call_majordomo("GET", f"script/{script_name}")
+    if resp and resp.status_code == 200:
+        if tts_feedback:
+            say_via_tts(f"Сценарий {script_name} запущен")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="run_script",
+            target=script_name,
+            success=True
+        )
+        return {"success": True, "script": script_name}
+    else:
+        error_msg = f"Сценарий '{script_name}' не запущен"
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="run_script",
+            target=script_name,
+            success=False,
+            details={"error": error_msg}
+        )
+        return {"error": error_msg}
+
+# === Запуск ===
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
