@@ -14,10 +14,11 @@ import sys
 import re
 from datetime import datetime
 import requests
+import subprocess  # ← Новый импорт
 
 # === Настройки ===
 SCHEDULE_FILE = "/opt/mcp-bridge/schedule.json"
-MAJORDOMO_URL = "http://192.168.88.2"
+MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://127.0.0.1")  # ← Теперь берётся из .env
 ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
 LOG_FILE = "/opt/mcp-bridge/logs/actions.log"
 
@@ -134,22 +135,25 @@ def send_telegram_error(message):
         return
     
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        import requests as req
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"  # ← Исправлено: убраны лишние пробелы
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": f"🚨 Ошибка в планировщике:\n{message}",
             "parse_mode": "HTML"
         }
-        requests.post(url, json=payload, timeout=5)
+        req.post(url, json=payload, timeout=5)
     except Exception as e:
         logger.error(f"Не удалось отправить в Telegram: {e}")
 
 def execute_task(task):
     """Выполняет задачу из расписания."""
+    task_id = task.get("id", "unknown")
+    description = task.get("description", task_id)
+    is_once = "once" in task.get("days", [])
+
     try:
         action = task["action"]
-        task_id = task.get("id", "unknown")
-        description = task.get("description", task_id)
         
         if action["type"] == "device":
             device_name = action["device"].lower()
@@ -163,6 +167,14 @@ def execute_task(task):
                 logger.error(error_msg)
                 log_action("device", device_name, success=False, details={"task_id": task_id, "error": error_msg})
                 send_telegram_error(f"<b>Задача:</b> {description}\n{error_msg}")
+                # === НОВОЕ: Удаляем одноразовое задание даже при ошибке ===
+                if is_once:
+                    schedule = load_schedule()
+                    updated_schedule = [t for t in schedule if t["id"] != task_id]
+                    save_schedule(updated_schedule)
+                    reload_scheduler()
+                    logger.info(f"[INFO] Одноразовое задание '{task_id}' удалено после ошибки.")
+                # ===
                 return
             
             value = "1" if action["state"].lower() in ("включи", "on", "1") else "0"
@@ -177,6 +189,14 @@ def execute_task(task):
                 logger.error(f"❌ Ошибка: {description} — {error_msg}")
                 log_action("device", norm_name, success=False, details={"task_id": task_id, "error": error_msg})
                 send_telegram_error(f"<b>Задача:</b> {description}\n{error_msg}")
+                # === НОВОЕ: Удаляем одноразовое задание даже при ошибке ===
+                if is_once:
+                    schedule = load_schedule()
+                    updated_schedule = [t for t in schedule if t["id"] != task_id]
+                    save_schedule(updated_schedule)
+                    reload_scheduler()
+                    logger.info(f"[INFO] Одноразовое задание '{task_id}' удалено после ошибки.")
+                # ===
 
         elif action["type"] == "script":
             script_name = action["script"]
@@ -191,12 +211,54 @@ def execute_task(task):
                 logger.error(f"❌ Ошибка: {error_msg}")
                 log_action("script", script_name, success=False, details={"task_id": task_id, "error": error_msg})
                 send_telegram_error(f"<b>Сценарий:</b> {script_name}\n{error_msg}")
+                # === НОВОЕ: Удаляем одноразовое задание даже при ошибке ===
+                if is_once:
+                    schedule = load_schedule()
+                    updated_schedule = [t for t in schedule if t["id"] != task_id]
+                    save_schedule(updated_schedule)
+                    reload_scheduler()
+                    logger.info(f"[INFO] Одноразовое задание '{task_id}' удалено после ошибки.")
+                # ===
+
+        # === НОВОЕ: Удаление одноразового задания после успешного выполнения ===
+        if is_once and (action["type"] == "device" and success or action["type"] == "script" and success):
+            schedule = load_schedule()
+            updated_schedule = [t for t in schedule if t["id"] != task_id]
+            save_schedule(updated_schedule)
+            reload_scheduler()
+            logger.info(f"[INFO] Одноразовое задание '{task_id}' удалено после выполнения.")
+        # ===
 
     except Exception as e:
         error_msg = f"Исключение: {str(e)}"
         logger.exception(f"Ошибка выполнения задачи {task_id}")
         log_action("execute_task", task_id, success=False, details={"error": str(e)})
         send_telegram_error(f"<b>Задача:</b> {task.get('description', task_id)}\n{error_msg}")
+        # === НОВОЕ: Удаляем одноразовое задание даже при исключении ===
+        if is_once:
+            schedule = load_schedule()
+            updated_schedule = [t for t in schedule if t["id"] != task_id]
+            save_schedule(updated_schedule)
+            reload_scheduler()
+            logger.info(f"[INFO] Одноразовое задание '{task_id}' удалено после исключения.")
+        # ===
+
+def load_schedule():
+    if not os.path.exists(SCHEDULE_FILE):
+        return []
+    with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_schedule(schedule):
+    with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+        json.dump(schedule, f, ensure_ascii=False, indent=2)
+
+def reload_scheduler():
+    """Перезапускает сервис планировщика."""
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "mcp-scheduler"], check=True)
+    except subprocess.CalledProcessError:
+        pass  # Игнорируем ошибки, если сервис не нуждается в перезапуске
 
 def scheduler_loop():
     """Основной цикл планировщика."""
@@ -217,13 +279,13 @@ def scheduler_loop():
                 time.sleep(60)
                 continue
 
-            with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
-                tasks = json.load(f)
+            tasks = load_schedule()
 
             for task in tasks:
                 if not task.get("enabled", True):
                     continue
-                if task.get("time") == current_min and current_day in task.get("days", []):
+                # === ИСПРАВЛЕНО: проверка на "once" ===
+                if task.get("time") == current_min and (current_day in task.get("days", []) or "once" in task.get("days", [])):
                     logger.info(f"⏰ Запуск задачи: {task.get('description', task['id'])}")
                     threading.Thread(target=execute_task, args=(task,)).start()
         except Exception as e:

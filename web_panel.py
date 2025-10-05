@@ -19,7 +19,7 @@ ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
 LOG_FILE = "/opt/mcp-bridge/logs/actions.log"
 VERSION_FILE = "/opt/mcp-bridge/VERSION"
 STATUS_FILE = "/opt/mcp-bridge/update_status.json"
-GITHUB_REPO = "golnet1/mcp-majordomo-xiaozh"
+GITHUB_REPO = "golnet1/mcp-majordomo-xiaozhi"
 
 # === Инициализация Flask ===
 app = Flask(__name__)
@@ -855,6 +855,18 @@ LOGS_TEMPLATE = """
             color: #888;
             padding: 20px;
         }
+        #refresh-btn {
+            margin-left: 10px;
+            padding: 4px 8px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #auto-refresh {
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -867,6 +879,10 @@ LOGS_TEMPLATE = """
         <div class="search-box">
             <input type="text" id="search-input" placeholder="Поиск по логам (источник, пользователь, действие, цель...)">
             <button onclick="searchLogs()">Найти</button>
+            <button id="refresh-btn" onclick="loadLogs(currentQuery)">🔄</button>
+            <label id="auto-refresh">
+                <input type="checkbox" id="auto-refresh-checkbox" onchange="toggleAutoRefresh()"> Автообновление
+            </label>
         </div>
         
         <a id="export-link" class="export-csv" href="/logs/export">📤 Экспорт в CSV</a>
@@ -878,34 +894,53 @@ LOGS_TEMPLATE = """
 
     <script>
         let currentQuery = '';
+        let autoRefreshInterval = null;
 
+        // === Функция загрузки логов ===
         async function loadLogs(query = '') {
             currentQuery = query;
-            const res = await fetch(`/logs/api?query=${encodeURIComponent(query)}`);
-            const logs = await res.json();
-            
-            const list = document.getElementById('log-list');
-            if (logs.length === 0) {
-                list.innerHTML = '<div class="no-results">Ничего не найдено</div>';
-            } else {
-                list.innerHTML = logs.map(entry => `
-                    <div class="log-entry">
-                        <span style="color:#888;">${entry.timestamp.substring(0, 19)}</span>
-                        [${entry.source}] 
-                        <b>${entry.user}</b> → 
-                        ${entry.action}(${entry.target})
-                        ${entry.success ? '<span class="log-success">✓</span>' : '<span class="log-error">✗</span>'}
-                        ${entry.details ? `<br><small>${JSON.stringify(entry.details)}</small>` : ''}
-                    </div>
-                `).join('');
+            try {
+                const res = await fetch(`/logs/api?query=${encodeURIComponent(query)}`);
+                const logs = await res.json();
+                
+                const list = document.getElementById('log-list');
+                if (logs.length === 0) {
+                    list.innerHTML = '<div class="no-results">Ничего не найдено</div>';
+                } else {
+                    list.innerHTML = logs.map(entry => `
+                        <div class="log-entry">
+                            <span style="color:#888;">${entry.timestamp.substring(0, 19)}</span>
+                            [${entry.source}] 
+                            <b>${entry.user}</b> → 
+                            ${entry.action}(${entry.target})
+                            ${entry.success ? '<span class="log-success">✓</span>' : '<span class="log-error">✗</span>'}
+                            ${entry.details ? `<br><small>${JSON.stringify(entry.details)}</small>` : ''}
+                        </div>
+                    `).join('');
+                }
+                
+                document.getElementById('export-link').href = `/logs/export?query=${encodeURIComponent(query)}`;
+            } catch (err) {
+                console.error('Ошибка загрузки логов:', err);
             }
-            
-            document.getElementById('export-link').href = `/logs/export?query=${encodeURIComponent(query)}`;
         }
 
         function searchLogs() {
             const query = document.getElementById('search-input').value.trim();
             loadLogs(query);
+        }
+
+        function toggleAutoRefresh() {
+            const checkbox = document.getElementById('auto-refresh-checkbox');
+            if (checkbox.checked) {
+                autoRefreshInterval = setInterval(() => {
+                    loadLogs(currentQuery);
+                }, 3000); // 3 секунды
+            } else {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                }
+            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -1079,13 +1114,35 @@ def add_device():
     prop = data.get("property")
     if not all([category, name, obj, prop]):
         return jsonify({"error": "Все поля обязательны"}), 400
+
     raw = {}
     if os.path.exists(ALIASES_FILE):
         with open(ALIASES_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
+
     if category not in raw:
-        return jsonify({"error": "Категория не найдена"}), 404
-    raw[category][name] = {"object": obj, "property": prop}
+        raw[category] = {}
+
+    # === НОВОЕ: Проверяем, есть ли уже такой object + property в категории ===
+    existing_key = None
+    for key, spec in raw[category].items():
+        if spec["object"] == obj and spec["property"] == prop:
+            existing_key = key
+            break
+
+    if existing_key:
+        # === Объединяем имена через запятую ===
+        names = [n.strip() for n in existing_key.split(",")]
+        if name not in names:
+            names.append(name)
+        new_key = ",".join(names)
+        # === Заменяем старый ключ на новый ===
+        raw[category][new_key] = {"object": obj, "property": prop}
+        del raw[category][existing_key]
+    else:
+        # === Создаём новую запись ===
+        raw[category][name] = {"object": obj, "property": prop}
+
     save_aliases(raw)
     log_action(
         source="web",
@@ -1103,13 +1160,38 @@ def delete_device():
     name = request.args.get("name")
     if not category or not name:
         return jsonify({"error": "Параметры category и name обязательны"}), 400
+
     raw = {}
     if os.path.exists(ALIASES_FILE):
         with open(ALIASES_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
-    if category not in raw or name not in raw[category]:
+
+    if category not in raw:
+        return jsonify({"error": "Категория не найдена"}), 404
+
+    # === НОВОЕ: Ищем ключ, содержащий имя ===
+    target_key = None
+    for key in raw[category].keys():
+        names = [n.strip() for n in key.split(",")]
+        if name in names:
+            target_key = key
+            break
+
+    if not target_key:
         return jsonify({"error": "Устройство не найдено"}), 404
-    del raw[category][name]
+
+    # === Удаляем имя из ключа ===
+    names = [n.strip() for n in target_key.split(",")]
+    names.remove(name)
+
+    # === Удаляем старую запись ===
+    old_spec = raw[category].pop(target_key)
+
+    if names:
+        # === Если остались имена, создаём новый ключ ===
+        new_key = ",".join(names)
+        raw[category][new_key] = old_spec
+
     save_aliases(raw)
     log_action(
         source="web",
@@ -1119,7 +1201,7 @@ def delete_device():
         success=True
     )
     return jsonify({"success": True})
-
+    
 @app.route("/api/device/edit", methods=["POST"])
 @requires_auth
 def edit_device():
@@ -1130,44 +1212,73 @@ def edit_device():
     new_name = data.get("new_name")
     obj = data.get("object")
     prop = data.get("property")
-    
+
     if not all([old_category, old_name, new_category, new_name, obj, prop]):
         return jsonify({"error": "Все поля обязательны"}), 400
-    
+
     raw = {}
     if os.path.exists(ALIASES_FILE):
         with open(ALIASES_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
-    
+
     if old_category not in raw:
         return jsonify({"error": "Исходная категория не найдена"}), 404
-    
-    original_key = None
+
+    # === НОВОЕ: Найти ключ, содержащий old_name ===
+    old_key = None
     for key in raw[old_category].keys():
-        names = [name.strip().lower() for name in key.split(",")]
-        if old_name.lower() in names:
-            original_key = key
+        names = [n.strip() for n in key.split(",")]
+        if old_name in names:
+            old_key = key
             break
-    
-    if not original_key:
+
+    if not old_key:
         return jsonify({"error": "Исходное устройство не найдено"}), 404
-    
-    current_names = [name.strip() for name in original_key.split(",")]
-    updated_names = []
-    for name in current_names:
-        if name.lower() == old_name.lower():
-            updated_names.append(new_name)
-        else:
-            updated_names.append(name)
-    
-    new_key = ",".join(updated_names)
-    device_spec = raw[old_category].pop(original_key)
-    
-    target_category = new_category
-    if target_category not in raw:
-        raw[target_category] = {}
-    
-    raw[target_category][new_key] = {"object": obj, "property": prop}
+
+    # === Удаляем old_name из старого ключа ===
+    old_names = [n.strip() for n in old_key.split(",")]
+    old_names.remove(old_name)
+
+    # === Удаляем старую запись ===
+    old_spec = raw[old_category].pop(old_key)
+
+    if old_names:
+        # === Если остались имена, создаём новый ключ ===
+        remaining_key = ",".join(old_names)
+        raw[old_category][remaining_key] = old_spec
+
+    # === Ищем, есть ли уже такой object + property в new_category ===
+    existing_key = None
+    if new_category in raw:
+        for key, spec in raw[new_category].items():
+            if spec["object"] == obj and spec["property"] == prop:
+                existing_key = key
+                break
+
+    if existing_key and new_category == old_category:
+        # === Объединяем имена ===
+        names = [n.strip() for n in existing_key.split(",")]
+        if new_name not in names:
+            names.append(new_name)
+        new_key = ",".join(names)
+        raw[new_category][new_key] = {"object": obj, "property": prop}
+        # Удаляем старый ключ, если он отличается
+        if existing_key != new_key:
+            del raw[new_category][existing_key]
+    elif existing_key and new_category != old_category:
+        # === Объединяем в новой категории ===
+        names = [n.strip() for n in existing_key.split(",")]
+        if new_name not in names:
+            names.append(new_name)
+        new_key = ",".join(names)
+        raw[new_category][new_key] = {"object": obj, "property": prop}
+        # Удаляем старый ключ, если он отличается
+        if existing_key != new_key:
+            del raw[new_category][existing_key]
+    else:
+        # === Создаём новую запись ===
+        raw[new_category][new_name] = {"object": obj, "property": prop}
+
     save_aliases(raw)
     log_action(
         source="web",
