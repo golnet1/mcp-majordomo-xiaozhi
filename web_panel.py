@@ -156,6 +156,7 @@ def update_from_github():
     try:
         import urllib.request
         import zipfile
+        import shutil
         
         # Получаем URL архива
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -168,22 +169,38 @@ def update_from_github():
         urllib.request.urlretrieve(zip_url, zip_path)
         
         # Распаковываем
+        extract_to = "/tmp/mcp-update"
+        shutil.rmtree(extract_to, ignore_errors=True)
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall("/tmp/mcp-update")
+            zip_ref.extractall(extract_to)
         
-        # Находим папку
-        update_dir = "/tmp/mcp-update/" + os.listdir("/tmp/mcp-update")[0]
+        # Находим корневую папку
+        root_items = os.listdir(extract_to)
+        if not root_items:
+            raise Exception("Архив пуст")
+        update_dir = os.path.join(extract_to, root_items[0])
         
-        # Обновляем только безопасные файлы
+        print(f"Обновление из: {update_dir}", file=sys.stderr)
+        
+        # Обновляем файлы
         safe_files = [
-            "web_panel.py", "mcp-majordomo-xiaozhi.py", "scheduler.py", 
-            "telegram_bot.py", "action_logger.py", "VERSION"
+            "mcp_pipe.py", "web_panel.py", "mcp-majordomo-xiaozhi.py", "scheduler.py", 
+            "check_update.py", "telegram_bot.py", "action_logger.py", "log_rotator.py", "VERSION"
         ]
-        for item in os.listdir(update_dir):
-            if item in safe_files:
-                src = os.path.join(update_dir, item)
-                dst = f"/opt/mcp-bridge/{item}"
-                os.replace(src, dst)
+        
+        updated = []
+        for file in safe_files:
+            src = os.path.join(update_dir, file)
+            dst = f"/opt/mcp-bridge/{file}"
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+                updated.append(file)
+                print(f"Обновлён: {file}", file=sys.stderr)
+            else:
+                print(f"Файл НЕ найден в релизе: {file}", file=sys.stderr)
+        
+        if not updated:
+            raise Exception("Ни один файл не был обновлён")
         
         # Перезапускаем сервисы
         subprocess.run(["sudo", "systemctl", "restart", "mcp-web-panel", "mcp-majordomo"], check=True)
