@@ -22,7 +22,7 @@ This project provides a complete bridge between **[MajorDoMo](https://github.com
 - ✅ **Auto-updater** — checks GitHub for new versions  
 - ✅ **Unified Logging** — all actions in one place  
 
-✅ Works on **Raspberry Pi**, **Linux servers**, and **Docker**.
+✅ Works on **Raspberry Pi**, **Linux servers**.
 
 ---
 
@@ -156,7 +156,7 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 - ✅ **Автообновление** — проверка обновлений на GitHub  
 - ✅ **Единый логгер** — все действия в одном месте  
 
-✅ Работает на **Raspberry Pi**, **Linux-серверах** и в **Docker**.
+✅ Работает на **Raspberry Pi**, **Linux-серверах**.
 
 ---
 
