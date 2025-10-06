@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Raspberry%20Pi-lightgrey.svg)](https://www.raspberrypi.org/)
 
-> **MCP Bridge** is a complete smart home control system built on **MajorDoMo**, integrated with the **AI agent [xiaozhi](https://xiaozhi.me)** via the **[MCP (Model Context Protocol)](https://github.com/modelcontextprotocol)**.  
+> **MCP Bridge** is a complete smart home control system built on **[MajorDoMo](https://mjdm.ru/)**, integrated with the **AI agent [xiaozhi](https://xiaozhi.me)** via the **[MCP (Model Context Protocol)](https://github.com/modelcontextprotocol)**.  
 > It supports control via **voice**, **Telegram**, **web interface**, **scheduling**, and **scenarios**.
 
 ---
@@ -125,7 +125,7 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgements
 
-- **[MajorDoMo](https://github.com/sergejey/majordomo)** — open-source home automation  
+- **[MajorDoMo](https://mjdm.ru/)** — open-source home automation  
 - **[xiaozhi](https://xiaozhi.me)** — AI agent platform  
 - **[MCP Protocol](https://modelcontextprotocol.io/)** — standard for AI-tool communication
 
@@ -139,7 +139,7 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Платформа](https://img.shields.io/badge/платформа-Linux%20%7C%20Raspberry%20Pi-lightgrey.svg)](https://www.raspberrypi.org/)
 
-> **MCP Bridge** — это полноценная система управления умным домом на базе **[MajorDoMo](https://github.com/sergejey/majordomo)**, интегрированная с **ИИ-агентом [xiaozhi](https://xiaozhi.me)** через протокол **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)**.  
+> **MCP Bridge** — это полноценная система управления умным домом на базе **[MajorDoMo](https://mjdm.ru/)**, интегрированная с **ИИ-агентом [xiaozhi](https://xiaozhi.me)** через протокол **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)**.  
 > Поддерживает управление **голосом**, **Telegram**, **веб-интерфейс**, **расписание** и **сценарии**.
 
 ---
@@ -257,7 +257,7 @@ sudo systemctl restart mcp-*
 
 ### 🙏 Благодарности
 
-- **[MajorDoMo](https://github.com/sergejey/majordomo)** — открытая система автоматизации дома  
+- **[MajorDoMo](https://mjdm.ru/)** — открытая система автоматизации дома  
 - **[xiaozhi](https://xiaozhi.me)** — платформа ИИ-агентов  
 - **[MCP Protocol](https://modelcontextprotocol.io/)** — стандарт для взаимодействия ИИ и инструментов
 
