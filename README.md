@@ -140,7 +140,7 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 [![Платформа](https://img.shields.io/badge/платформа-Linux%20%7C%20Raspberry%20Pi-lightgrey.svg)](https://www.raspberrypi.org/)
 
 > **MCP Bridge** — это полноценная система управления умным домом на базе **[MajorDoMo](https://github.com/sergejey/majordomo)**, интегрированная с **ИИ-агентом [xiaozhi](https://xiaozhi.me)** через протокол **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)**.  
-> Поддерживает управление через **голос**, **Telegram**, **веб-интерфейс**, **расписание** и **сценарии**.
+> Поддерживает управление **голосом**, **Telegram**, **веб-интерфейс**, **расписание** и **сценарии**.
 
 ---
 
