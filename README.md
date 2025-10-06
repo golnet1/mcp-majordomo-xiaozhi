@@ -35,9 +35,8 @@ This project provides a complete bridge between **[MajorDoMo](https://github.com
 
 ### 2. Installation
 ```bash
-# Clone the repository
-git clone https://github.com/golnet1/mcp-majordomo-xiaozhi.git
-cd mcp-majordomo-xiaozhi
+# Download the installer
+wget https://raw.githubusercontent.com/golnet1/mcp-majordomo-xiaozhi/refs/heads/main/install_mcp_majordomo.sh
 
 # Run the installer (interactive)
 chmod +x install_mcp_majordomo.sh
@@ -169,9 +168,8 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 
 #### 2. Установка
 ```bash
-# Клонировать репозиторий
-git clone https://github.com/golnet1/mcp-majordomo-xiaozhi.git
-cd mcp-majordomo-xiaozhi
+# Скачать установщик
+wget https://raw.githubusercontent.com/golnet1/mcp-majordomo-xiaozhi/refs/heads/main/install_mcp_majordomo.sh
 
 # Запустить установщик (интерактивный)
 chmod +x install_mcp_majordomo.sh
