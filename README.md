@@ -1,13 +1,13 @@
 ## 🌐 English | [Русский](#русский)
 
-# 🏠 MCP Bridge for MajorDoMo — Умный дом с ИИ
+# 🏠 MCP Bridge for MajorDoMo — Smart Home with AI
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Raspberry%20Pi-lightgrey.svg)](https://www.raspberrypi.org/)
 
-> **MCP Bridge** — это полноценная система управления умным домом на базе **[MajorDoMo](https://github.com/sergejey/majordomo)**, интегрированная с **ИИ-агентами** (например, [xiaozhi](https://xiaozhi.me)) через протокол **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)**.  
-> Поддерживает управление через **голос**, **Telegram**, **веб-интерфейс**, **расписание** и **сценарии**.
+> **MCP Bridge** is a complete smart home control system built on **MajorDoMo**, integrated with the **AI agent [xiaozhi](https://xiaozhi.me)** via the **[MCP (Model Context Protocol)](https://github.com/modelcontextprotocol)**.  
+> It supports control via **voice**, **Telegram**, **web interface**, **scheduling**, and **scenarios**.
 
 ---
 
@@ -115,10 +115,6 @@ sudo systemctl restart mcp-*
 
 The system checks for updates **every hour** and shows a notification in the web panel when a new version is available.
 
-To create a release:
-1. Update the `VERSION` file  
-2. Commit and push changes  
-3. Create a GitHub Release with tag `vX.X.X`
 
 ---
 
@@ -252,11 +248,6 @@ sudo systemctl restart mcp-*
 ### 🔄 Автообновление
 
 Система проверяет обновления **каждый час** и показывает уведомление в веб-панели, когда доступна новая версия.
-
-Чтобы создать релиз:
-1. Обновите файл `VERSION`  
-2. Сделайте коммит и отправьте изменения  
-3. Создайте релиз на GitHub с тегом `vX.X.X`
 
 ---
 
