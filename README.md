@@ -105,7 +105,7 @@ MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=...
 
 After editing, restart services:
 ```bash
-sudo systemctl restart mcp-*
+sudo systemctl restart mcp-majordomo mcp-web-panel mcp-scheduler mcp-telegram-bot
 ```
 
 ---
@@ -238,7 +238,7 @@ MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=...
 
 После редактирования перезапустите сервисы:
 ```bash
-sudo systemctl restart mcp-*
+sudo systemctl restart mcp-majordomo mcp-web-panel mcp-scheduler mcp-telegram-bot
 ```
 
 ---
