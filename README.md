@@ -137,7 +137,7 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 ---
 
 <br><br>
-
+## Русский
 # 🏠 MCP Bridge для MajorDoMo — Умный дом с ИИ
 
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-blue.svg)](LICENSE)
