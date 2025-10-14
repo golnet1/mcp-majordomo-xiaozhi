@@ -88,11 +88,17 @@ echo -e "${CYAN}========================================${NC}"
 echo ""
 INSTALL_DIR="/opt/mcp-bridge"
 LOGS_DIR="$INSTALL_DIR/logs"
+mkdir -p "$INSTALL_DIR"
 mkdir -p "$LOGS_DIR"
 
 # === 3. Установка зависимостей ===
 echo -e "${YELLOW}Установка Python-зависимостей...${NC}"
-pip3 install --user flask requests python-telegram-bot fastmcp python-dotenv
+
+# Создаём виртуальное окружение
+python3 -m venv "$INSTALL_DIR/.venv"
+
+# Устанавливаем зависимости через pip из виртуального окружения
+"$INSTALL_DIR/.venv/bin/pip" install --quiet flask requests python-telegram-bot fastmcp python-dotenv
 
 # === 4. Скачивание .py файлов с GitHub ===
 echo -e "${YELLOW}Скачивание файлов с GitHub...${NC}"
@@ -239,7 +245,7 @@ cat > "$INSTALL_DIR/schedule.json" << 'EOF'
 EOF
 
 # VERSION
-echo "v1.0.0" > "$INSTALL_DIR/VERSION"
+echo "v1.0.5" > "$INSTALL_DIR/VERSION"
 
 # === 7. Создание systemd-сервисов ===
 SERVICES=(
@@ -261,7 +267,7 @@ Type=simple
 User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 mcp_pipe.py
+ExecStart=/opt/mcp-bridge/.venv/bin/python3 /opt/mcp-bridge/mcp_pipe.py
 Restart=always
 
 [Install]
@@ -278,7 +284,7 @@ Type=simple
 User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 web_panel.py
+ExecStart=/opt/mcp-bridge/.venv/bin/python3 /opt/mcp-bridge/web_panel.py
 Restart=always
 
 [Install]
@@ -295,7 +301,7 @@ Type=simple
 User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 scheduler.py
+ExecStart=/opt/mcp-bridge/.venv/bin/python3 /opt/mcp-bridge/scheduler.py
 Restart=always
 
 [Install]
@@ -312,7 +318,7 @@ Type=simple
 User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 telegram_bot.py
+ExecStart=/opt/mcp-bridge/.venv/bin/python3 /opt/mcp-bridge/telegram_bot.py
 Restart=always
 
 [Install]
@@ -328,7 +334,7 @@ Type=oneshot
 User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 log_rotator.py
+ExecStart=/opt/mcp-bridge/.venv/bin/python3 /opt/mcp-bridge/log_rotator.py
 EOF
 
 cat > "/tmp/mcp-log-rotate.timer" << EOF
