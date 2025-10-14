@@ -1,30 +1,56 @@
 #!/bin/bash
 set -e
 
-echo "==============================================="
-echo " Установка системы управления MajorDoMo через MCP"
-echo "==============================================="
+# Цвета
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+echo -e "${CYAN}=================================================${NC}"
+echo -e "${CYAN} Установка системы управления MajorDoMo через MCP${NC}"
+echo -e "${CYAN}=================================================${NC}"
+echo ""
+echo -e " Установка производится с правами ${GREEN}$(whoami)${NC}"
+echo -e "${YELLOW} Все службы будут запускаться от этой учетной записи${NC}"
+echo ""
+
+WHOAMI="www-data"
 
 # === 1. Запрос данных у пользователя ===
 
 # MajorDoMo URL
 read -p "IP или домен MajorDoMo (например, http://127.0.0.1): " MAJORDOMO_URL
+MAJORDOMO_URL=${MAJORDOMO_URL:-http://127.0.0.1}
 
 # MCP_ENDPOINT
 echo
-echo "=== Настройка MCP-эндпоинта ==="
+echo -e "${YELLOW}=== Настройка MCP-эндпоинта ===${NC}"
 echo "Это WebSocket-адрес, по которому ИИ (xiaozhi) подключается к вашей системе."
 echo "Формат: wss://api.xiaozhi.me/mcp/?token=ВАШ_ТОКЕН"
 echo "Где взять:"
 echo "1. Зарегистрируйтесь на https://xiaozhi.me"
 echo "2. Создайте агента и получите токен в настройках"
+echo "   Configure Role -> MCP Settings -> Get MCP Endpoint"
 echo "3. Скопируйте полный URL из настроек агента"
 echo
-read -p "MCP_ENDPOINT (оставьте пустым, если не используете xiaozhi): " MCP_ENDPOINT
+read -p "MCP_ENDPOINT URL с ключем: " MCP_ENDPOINT
+
+if [ -z "$MCP_ENDPOINT" ]; then
+    echo -e "${RED}Ошибка: URL не может быть пустым${NC}"
+    exit 1
+fi
+
+if ! [[ "$MCP_ENDPOINT" =~ ^wss://.{20,}$ ]]; then
+    echo -e "${RED}Ошибка: URL должен начинаться с wss:// и содержать не менее 20 символов после ://${NC}"
+    exit 1
+fi
 
 # Telegram-бот
 echo
-echo "=== Настройка Telegram-бота ==="
+echo -e "${YELLOW}=== Настройка Telegram-бота ===${NC}"
 echo "1. Откройте Telegram и найдите @BotFather"
 echo "2. Нажмите /start → /newbot"
 echo "3. Введите имя бота (например, HomeControlBot)"
@@ -37,37 +63,41 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "6. Перейдите по ссылке: https://api.telegram.org/botВАШ_ТОКЕН/getUpdates"
     echo "7. Найдите в ответе ваш 'id' (например, \"id\": 123456789)"
     read -p "TELEGRAM_CHAT_ID: " TELEGRAM_CHAT_ID
-    read -p "Пароль для команд в Telegram (например, secret123): " TELEGRAM_AUTH_PASSWORD
+    read -s -p "Пароль для команд в Telegram (например, secret123): " TELEGRAM_AUTH_PASSWORD
+    echo
 fi
 
 # Веб-панель
 echo
-echo "=== Настройка веб-панели ==="
+echo -e "${YELLOW}=== Настройка веб-панели ===${NC}"
 read -p "Логин для веб-панели (по умолчанию: admin): " WEB_USER
 WEB_USER=${WEB_USER:-admin}
 read -s -p "Пароль для веб-панели: " WEB_PASS
 echo
 
 if [ -z "$WEB_PASS" ]; then
-    echo "Ошибка: пароль не может быть пустым"
+    echo -e "${RED}Ошибка: пароль не может быть пустым${NC}"
     exit 1
 fi
 
 # === 2. Создание директорий ===
+echo
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}Права на папку и файлы установки: ${GREEN}$WHOAMI${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
 INSTALL_DIR="/opt/mcp-bridge"
 LOGS_DIR="$INSTALL_DIR/logs"
 mkdir -p "$LOGS_DIR"
-chown -R $(whoami):$(whoami) "$INSTALL_DIR"
 
 # === 3. Установка зависимостей ===
-echo "Установка Python-зависимостей..."
+echo -e "${YELLOW}Установка Python-зависимостей...${NC}"
 pip3 install --user flask requests python-telegram-bot fastmcp python-dotenv
 
 # === 4. Скачивание .py файлов с GitHub ===
-echo "Скачивание файлов с GitHub..."
+echo -e "${YELLOW}Скачивание файлов с GitHub...${NC}"
 GITHUB_URL="https://raw.githubusercontent.com/golnet1/mcp-majordomo-xiaozhi/main"
 
-# Список файлов для скачивания
 PY_FILES=(
     "mcp_pipe.py"
     "mcp-majordomo-xiaozhi.py"
@@ -75,7 +105,7 @@ PY_FILES=(
     "scheduler.py"
     "telegram_bot.py"
     "action_logger.py"
-	"log_rotator.py"
+    "log_rotator.py"
     "check_update.py"
 )
 
@@ -83,9 +113,9 @@ for file in "${PY_FILES[@]}"; do
     if curl --output /dev/null --silent --head --fail "$GITHUB_URL/$file"; then
         curl -s -L "$GITHUB_URL/$file" -o "$INSTALL_DIR/$file"
         chmod +x "$INSTALL_DIR/$file"
-        echo "  $file — успешно"
+        echo -e "  ${GREEN}✓ $file — успешно${NC}"
     else
-        echo "  $file — не найден в репозитории"
+        echo -e "  ${RED}✗ $file — не найден в репозитории${NC}"
     fi
 done
 
@@ -113,23 +143,13 @@ chmod 600 "$INSTALL_DIR/.env"
 
 # === 6. Создание конфигурационных файлов ===
 
-cat > "$INSTALL_DIR/mcp_config.json.json" << 'EOF'
+cat > "$INSTALL_DIR/mcp_config.json" << 'EOF'
 {
   "mcpServers": {
     "majordomo-xiaozhi": {
       "type": "stdio",
       "command": "python",
       "args": ["-m", "mcp-majordomo-xiaozhi"]
-    },
-    "remote-sse-server": {
-      "type": "sse",
-      "url": "https://api.example.com/sse",
-      "disabled": true
-    },
-    "remote-http-server": {
-      "type": "http",
-      "url": "https://api.example.com/mcp",
-      "disabled": true
     }
   }
 }
@@ -222,31 +242,40 @@ EOF
 echo "v1.0.0" > "$INSTALL_DIR/VERSION"
 
 # === 7. Создание systemd-сервисов ===
-cat > /tmp/mcp-majordomo.service << EOF
+SERVICES=(
+    "mcp-majordomo.service"
+    "mcp-web-panel.service"
+    "mcp-scheduler.service"
+    "mcp-telegram-bot.service"
+    "mcp-log-rotate.service"
+    "mcp-log-rotate.timer"
+)
+
+cat > "/tmp/mcp-majordomo.service" << EOF
 [Unit]
 Description=MCP Server for MajorDoMo
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
-ExecStart=/usr/bin/python3 mcp-majordomo-xiaozhi.py
+ExecStart=/usr/bin/python3 mcp_pipe.py
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-cat > /tmp/mcp-web-panel.service << EOF
+cat > "/tmp/mcp-web-panel.service" << EOF
 [Unit]
 Description=MCP Web Panel for Aliases
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
 ExecStart=/usr/bin/python3 web_panel.py
@@ -256,14 +285,14 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-cat > /tmp/mcp-scheduler.service << EOF
+cat > "/tmp/mcp-scheduler.service" << EOF
 [Unit]
 Description=MCP Scheduler
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
 ExecStart=/usr/bin/python3 scheduler.py
@@ -273,14 +302,14 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-cat > /tmp/mcp-telegram-bot.service << EOF
+cat > "/tmp/mcp-telegram-bot.service" << EOF
 [Unit]
 Description=MCP Telegram Bot
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=$WHOAMI
 WorkingDirectory=/opt/mcp-bridge
 EnvironmentFile=/opt/mcp-bridge/.env
 ExecStart=/usr/bin/python3 telegram_bot.py
@@ -290,28 +319,63 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+cat > "/tmp/mcp-log-rotate.service" << EOF
+[Unit]
+Description=MCP Log Rotation
+
+[Service]
+Type=oneshot
+User=$WHOAMI
+WorkingDirectory=/opt/mcp-bridge
+EnvironmentFile=/opt/mcp-bridge/.env
+ExecStart=/usr/bin/python3 log_rotator.py
+EOF
+
+cat > "/tmp/mcp-log-rotate.timer" << EOF
+[Unit]
+Description=Ежедневная ротация логов MCP
+Requires=mcp-log-rotate.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo chown -R "$WHOAMI":"$WHOAMI" "$INSTALL_DIR"
 sudo mv /tmp/mcp-*.service /etc/systemd/system/
+sudo mv /tmp/mcp-log-rotate.timer /etc/systemd/system/
 
 # === 8. Настройка sudo для обновления ===
-echo "$(whoami) ALL=(ALL) NOPASSWD: /bin/systemctl restart mcp-web-panel mcp-majordomo mcp-scheduler mcp-telegram-bot" | sudo tee /etc/sudoers.d/mcp-bridge >/dev/null
+echo "$WHOAMI ALL=(ALL) NOPASSWD: /bin/systemctl restart mcp-web-panel mcp-majordomo mcp-scheduler mcp-telegram-bot" | sudo tee /etc/sudoers.d/mcp-bridge >/dev/null
 
 # === 9. Добавление cron для проверки обновлений ===
 (crontab -l 2>/dev/null; echo "0 * * * * /usr/bin/python3 /opt/mcp-bridge/check_update.py >> /opt/mcp-bridge/logs/update.log 2>&1") | crontab -
 
 # === 10. Запуск сервисов ===
+echo -e "${YELLOW}Применение изменений systemd и запуск служб...${NC}"
 sudo systemctl daemon-reload
-sudo systemctl enable --now mcp-majordomo mcp-web-panel mcp-scheduler
+sudo systemctl enable --now mcp-majordomo mcp-web-panel mcp-scheduler mcp-log-rotate.timer
 
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     sudo systemctl enable --now mcp-telegram-bot
 fi
 
-echo "==============================================="
-echo " Установка завершена!"
-echo " Веб-панель: http://$(hostname -I | awk '{print $1}'):5000"
-echo " Логин: $WEB_USER"
-echo " Пароль: $WEB_PASS"
-echo " MajorDoMo: $MAJORDOMO_URL"
-echo " GitHub: https://github.com/$GITHUB_REPO"
-echo " Логи: $INSTALL_DIR/logs/actions.log"
-echo "==============================================="
+# === Финальное сообщение ===
+IP=$(hostname -I | awk '{print $1}')
+echo
+echo -e "${GREEN}===================================================${NC}"
+echo -e "${GREEN} Установка завершена!${NC}"
+echo
+echo -e " Папка установки: ${CYAN}$INSTALL_DIR${NC}"
+echo
+echo -e " Веб-панель:       ${CYAN}http://$IP:5000${NC}"
+echo -e " Логин:            ${CYAN}$WEB_USER${NC}"
+echo -e " Пароль:           ${CYAN}$WEB_PASS;${NC}"
+echo
+echo -e " MajorDoMo:        ${CYAN}$MAJORDOMO_URL${NC}"
+echo
+echo -e " Логи:             ${CYAN}$INSTALL_DIR/logs/actions.log${NC}"
+echo -e "${GREEN}===================================================${NC}"

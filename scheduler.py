@@ -18,7 +18,7 @@ import subprocess  # ← Новый импорт
 
 # === Настройки ===
 SCHEDULE_FILE = "/opt/mcp-bridge/schedule.json"
-MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://127.0.0.1")  # ← Теперь берётся из .env
+MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://127.0.0.1")  # ← Берётся из .env
 ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
 LOG_FILE = "/opt/mcp-bridge/logs/actions.log"
 

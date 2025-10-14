@@ -18,7 +18,7 @@ log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper())
 logging.basicConfig(stream=sys.stderr, level=log_level, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("mcp_majordomo")
 
-MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://192.168.88.2")
+MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://127.0.0.1")
 ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
 
 # === Импорт единого логгера ===

@@ -24,7 +24,7 @@ from action_logger import log_action
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Получи у @BotFather
 AUTHORIZED_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Твой chat_id
 AUTH_PASSWORD = os.getenv("TELEGRAM_AUTH_PASSWORD", "secret123")
-MAJORDOMO_URL = "http://192.168.88.2"
+MAJORDOMO_URL = os.getenv("MAJORDOMO_URL", "http://127.0.0.1")
 ALIASES_FILE = "/opt/mcp-bridge/device_aliases.json"
 
 # Хранилище сессий
