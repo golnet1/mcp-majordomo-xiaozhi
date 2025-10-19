@@ -98,7 +98,7 @@ echo -e "${YELLOW}Установка Python-зависимостей...${NC}"
 python3 -m venv "$INSTALL_DIR/.venv"
 
 # Устанавливаем зависимости через pip из виртуального окружения
-"$INSTALL_DIR/.venv/bin/pip" install --quiet flask requests python-telegram-bot fastmcp python-dotenv
+"$INSTALL_DIR/.venv/bin/pip" install --quiet websockets flask requests python-telegram-bot fastmcp python-dotenv
 
 # === 4. Скачивание .py файлов с GitHub ===
 echo -e "${YELLOW}Скачивание файлов с GitHub...${NC}"
