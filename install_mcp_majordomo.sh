@@ -91,14 +91,39 @@ LOGS_DIR="$INSTALL_DIR/logs"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$LOGS_DIR"
 
+get_python_ge_310() {
+    for cmd in python3.14 python3.13 python3.12 python3.11 python3.10; do
+        if command -v "$cmd" &> /dev/null; then
+            echo "$cmd"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PYTHON_CMD=$(get_python_ge_310)
+
+if [ -z "$PYTHON_CMD" ]; then
+    echo -e "${YELLOW}Ошибка: не найдена версия Python >= 3.10.${NC}"
+    exit 1
+else
+    echo -e "${YELLOW}Найдена подходящая версия Python: $PYTHON_CMD${NC}"
+fi
+
 # === 3. Установка зависимостей ===
 echo -e "${YELLOW}Установка Python-зависимостей...${NC}"
 
 # Создаём виртуальное окружение
-python3 -m venv "$INSTALL_DIR/.venv"
+"$PYTHON_CMD" -m venv "$INSTALL_DIR/.venv"
 
 # Устанавливаем зависимости через pip из виртуального окружения
-"$INSTALL_DIR/.venv/bin/pip" install --quiet websockets flask requests python-telegram-bot fastmcp python-dotenv
+"$INSTALL_DIR/.venv/bin/pip" install --quiet websockets flask requests python-telegram-bot fastmcp python-dotenv requests
+
+# Убедитесь, что все зависимости установлены
+if ! /opt/mcp-bridge/.venv/bin/python -c "import requests" &> /dev/null; then
+    echo "Устанавливаем недостающие зависимости..."
+    sudo /opt/mcp-bridge/.venv/bin/pip install --quiet requests websockets flask python-telegram-bot python-dotenv
+fi
 
 # === 4. Скачивание .py файлов с GitHub ===
 echo -e "${YELLOW}Скачивание файлов с GitHub...${NC}"
@@ -165,63 +190,97 @@ EOF
 cat > "$INSTALL_DIR/device_aliases.json" << 'EOF'
 {
   "освещение": {
-    "улица": {
-      "object": "Relay01",
-      "property": "status"
-    },
-    "коридор,прихожая": {
-      "object": "Relay02",
-      "property": "status"
-    },
-    "комната отдыха,гостинная": {
-      "object": "Relay03",
-      "property": "status"
-    },
-    "туалет": {
-      "object": "Relay04",
-      "property": "status"
-    },
-    "душ": {
-      "object": "Relay05",
-      "property": "status"
-    },
-    "сауна,баня,парная,парилка": {
-      "object": "Relay06",
-      "property": "status"
+    "type": "relay",
+    "devices": {
+      "улица": {
+        "object": "Relay01",
+        "property": "status"
+      },
+      "коридор,прихожая": {
+        "object": "Relay02",
+        "property": "status"
+      },
+      "комната отдыха,гостиная,салон": {
+        "object": "Relay03",
+        "property": "status"
+      },
+      "туалет": {
+        "object": "Relay04",
+        "property": "status"
+      },
+      "душ": {
+        "object": "Relay05",
+        "property": "status"
+      },
+      "сауна,баня,парная,парилка": {
+        "object": "Relay06",
+        "property": "status"
+      }
+    }
+  },
+  "свет": {
+    "type": "relay",
+    "devices": {
+      "кухня": {
+        "object": "Relay07",
+        "property": "status"
+      },
+      "спальня": {
+        "object": "Relay08",
+        "property": "status"
+      }
     }
   },
   "колонки": {
-    "комната отдыха,гостинная": {
-      "object": "ESP32_Bedroom",
-      "property": "tts"
+    "type": "media",
+    "devices": {
+      "колонка в комнате отдыха,гостиная": {
+        "object": "ESP32_Bedroom",
+        "property": "tts"
+      }
     }
   },
   "устройства": {
-    "септик,канализация": {
-      "object": "Relay16",
-      "property": "status"
-    },
-    "бойлер,нагреватель": {
-      "object": "Relay17",
-      "property": "status"
-    },
-    "полотенцесушитель,горячая вода": {
-      "object": "Relay18",
-      "property": "status"
+    "type": "device",
+    "devices": {
+      "септик,канализация": {
+        "object": "Relay16",
+        "property": "status"
+      },
+      "бойлер,нагреватель": {
+        "object": "Relay17",
+        "property": "status"
+      },
+      "полотенцесушитель,горячая вода": {
+        "object": "Relay18",
+        "property": "status"
+      }
     }
   },
-  "климат": {
-    "температура в комнате отдыха": {
-      "object": "Boiler_Dacha",
-      "property": "TempInRoom"
-    },
-    "температура в парной": {
-      "object": "Steam",
-      "property": "getTemp"
-    },
-    "влажность": {
-      "object": "HumiditySensor",
-      "property": "value"
+  "температура": {
+    "type": "sensors",
+    "devices": {
+      "комната отдыха": {
+        "object": "Boiler_Dacha",
+        "property": "TempInRoom"
+      },
+      "парная,сауна": {
+        "object": "Steam",
+        "property": "getTemp"
+      }
+    }
+  },
+  "влажность": {
+    "type": "sensors",
+    "devices": {
+      "парная,сауна": {
+        "object": "HumiditySensor",
+        "property": "value"
+      },
+      "душ": {
+        "object": "ShowerHumidity",
+        "property": "value"
+      }
     }
   }
 }
