@@ -170,6 +170,7 @@ def update_from_github():
 
         # Определяем файлы, которые нужно обновить
         files_to_update = [
+            "mcp_pipe.py",
             "mcp-majordomo-xiaozhi.py",
             "web_panel.py",
             "scheduler.py",
@@ -177,7 +178,8 @@ def update_from_github():
             "action_logger.py",
             "log_rotator.py",
             "check_update.py",
-            "install_mcp_majordomo.sh"
+            "install_mcp_majordomo.sh",
+            "VERSION"
         ]
 
         updated_any = False
