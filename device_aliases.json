@@ -1,0 +1,79 @@
+{
+  "свет": {
+    "type": "relay",
+    "devices": {
+      "улица": {
+        "object": "Relay01",
+        "property": "status"
+      },
+      "коридор,прихожая": {
+        "object": "Relay02",
+        "property": "status"
+      },
+      "комната отдыха,гостиная,салон": {
+        "object": "Relay03",
+        "property": "status"
+      },
+      "туалет": {
+        "object": "Relay04",
+        "property": "status"
+      },
+      "душ": {
+        "object": "Relay05",
+        "property": "status"
+      },
+      "сауна,баня,парная,парилка": {
+        "object": "Relay06",
+        "property": "status"
+      }
+    }
+  },
+  "колонки": {
+    "type": "media",
+    "devices": {
+      "колонка в комнате отдыха,гостиная": {
+        "object": "ESP32_Bedroom",
+        "property": "tts"
+      }
+    }
+  },
+  "устройства": {
+    "type": "device",
+    "devices": {
+      "септик,канализация": {
+        "object": "Relay16",
+        "property": "status"
+      },
+      "бойлер,нагреватель": {
+        "object": "Relay17",
+        "property": "status"
+      },
+      "полотенцесушитель,горячая вода": {
+        "object": "Relay18",
+        "property": "status"
+      }
+    }
+  },
+  "температура": {
+    "type": "sensors",
+    "devices": {
+      "парная": {
+        "object": "Steam",
+        "property": "getTemp"
+      },
+      "комната отдыха": {
+        "object": "Boiler_Dacha",
+        "property": "TempInRoom"
+      }
+    }
+  },
+  "влажность": {
+    "type": "sensors",
+    "devices": {
+      "комната отдыха": {
+        "object": "HumiditySensor",
+        "property": "value"
+      }
+    }
+  }
+}
