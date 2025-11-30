@@ -421,17 +421,34 @@ def get_device_status(device_query: str, tts_feedback: bool = True) -> dict:
 @mcp.tool()
 def get_sensor_value(sensor_query: str, unit: str = "", tts_feedback: bool = True) -> dict:
     """
-    Чтение значения сенсора (тип 'sensors') с TTS и поддержкой дублирующихся алиасов.
+    Чтение значения сенсора (тип 'sensors') с TTS и поддержкой дубликаций.
     unit: строка для озвучивания, например, "градусов", "процентов", "Паскаль".
     """
     norm_query = normalize_query(sensor_query)
     logger.info(f"Запрос сенсора: '{sensor_query}' → нормализовано: '{norm_query}'")
 
-    # Ищем устройство с типом sensors
+    # --- ИЗМЕНЕНИЕ: Предположим, что unit="%" указывает на влажность ---
+    # В реальности ИИ должен сам понимать контекст запроса ("влажность")
+    # и вызывать соответствующий инструмент или передавать категорию.
+    # Но если unit используется как подсказка:
+    preferred_categories = None
+    if unit == "процентов" or "влажность" in sensor_query: # Простая эвристика
+         preferred_categories = ["сенсоры_влажность","сенсоры_влажности"] 
+    elif unit in ["градусов", "°C", "°F"]:
+         preferred_categories = ["сенсоры_температура","сенсоры_температуры"] 
+    elif unit in ["давление", "бар", "паскаль","па","атм","мм рт.ст."]:
+         preferred_categories = ["сенсоры_давление","сенсоры_давления"] 
+    elif unit in ["ppm", "co2"]:
+         preferred_categories = ["сенсоры_газ","сенсоры_газа","сенсоры_углекислый газ"] 
+
+    # Ищем устройство с типом sensors и предпочтительно в нужной категории
     device_spec = find_device_by_category_and_type(
         norm_query,
-        required_type="sensors" # Только сенсоры
+        preferred_categories=preferred_categories, # Используем определённые категории
+        required_type="sensors"
     )
+    # ---
+
     if not device_spec:
         # Формируем список ТОЛЬКО сенсоров
         aliases = load_aliases()
