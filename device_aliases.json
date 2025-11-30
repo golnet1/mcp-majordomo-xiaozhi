@@ -10,10 +10,6 @@
         "object": "Relay02",
         "property": "status"
       },
-      "комната отдыха,гостиная,салон": {
-        "object": "Relay03",
-        "property": "status"
-      },
       "туалет": {
         "object": "Relay04",
         "property": "status"
@@ -24,6 +20,10 @@
       },
       "сауна,баня,парная,парилка": {
         "object": "Relay06",
+        "property": "status"
+      },
+      "комната отдыха,гостиная": {
+        "object": "Relay03",
         "property": "status"
       }
     }
@@ -54,7 +54,7 @@
       }
     }
   },
-  "температура": {
+  "сенсоры_температура": {
     "type": "sensors",
     "devices": {
       "парная": {
@@ -73,6 +73,15 @@
       "комната отдыха": {
         "object": "HumiditySensor",
         "property": "value"
+      }
+    }
+  },
+  "устройства_температура": {
+    "type": "device",
+    "devices": {
+      "комната отдыха": {
+        "object": "Boiler_Dacha",
+        "property": "TempInRoom"
       }
     }
   }
