@@ -170,7 +170,6 @@ def update_from_github():
 
         # Определяем файлы, которые нужно обновить
         files_to_update = [
-            "mcp_pipe.py",
             "mcp-majordomo-xiaozhi.py",
             "web_panel.py",
             "scheduler.py",
@@ -178,8 +177,7 @@ def update_from_github():
             "action_logger.py",
             "log_rotator.py",
             "check_update.py",
-            "install_mcp_majordomo.sh",
-            "VERSION"
+            "install_mcp_majordomo.sh"
         ]
 
         updated_any = False
@@ -195,7 +193,7 @@ def update_from_github():
             raise Exception("Ни один файл не был обновлён")
 
         # Перезапускаем сервисы
-        subprocess.run(["sudo", "systemctl", "restart", "mcp-majordomo", "mcp-web-panel", "mcp-scheduler", "mcp-telegram-bot", "mcp-log-rotate"], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "mcp-web-panel", "mcp-majordomo"], check=True)
         return True
     except Exception as e:
         print(f"Ошибка обновления: {e}", file=sys.stderr)
@@ -541,8 +539,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        // === Обновление системы ===
         async function applyUpdate() {
-            const res = await fetch('/api/update', { method: 'POST' });
+            if (!confirm('Обновить систему? Сервисы будут перезапущены.')) return;
+            const res = await fetch('/update/apply', {method: 'POST'});
             const data = await res.json();
             if (data.success) {
                 alert('Система обновлена! Страница перезагрузится.');
@@ -1166,14 +1166,17 @@ def update_status():
             return jsonify(json.load(f))
     return jsonify({"update_available": False})
 
-@app.route("/api/update", methods=["POST"])
-def api_update():
+@app.route("/update/apply", methods=["POST"])
+@requires_auth
+def apply_update():
     success = update_from_github()
     if success:
-        return jsonify({"success": True})
+        # Сбрасываем статус после обновления
+        if os.path.exists(STATUS_FILE):
+            os.remove(STATUS_FILE)
+        return jsonify({"success": True, "message": "Система обновлена и перезапущена"})
     else:
-        latest = get_latest_version()
-        return jsonify({"success": False, "error": f"Не удалось обновиться до {latest}"}), 500
+        return jsonify({"error": "Ошибка при обновлении"}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
