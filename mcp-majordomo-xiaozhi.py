@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Универсальный MCP-сервер для MajorDoMo + xiaozhi
-С поддержкой дублирующихся алиасов и системных типов устройств (relay, media, device, sensors).
+"""
+Универсальный MCP-сервер для MajorDoMo + xiaozhi
+С поддержкой дублирующихся алиасов (например, "комната отдыха" в освещении и колонках).
 Все действия логируются в единый файл /opt/mcp-bridge/logs/actions.log
-Версия: 1.1.0
 """
 import sys
 import os
@@ -26,47 +26,47 @@ try:
     from action_logger import log_action
 except ImportError:
     logger.error("Не удалось импортировать action_logger. Логирование отключено.")
-    def log_action(*args, **kwargs): pass # Заглушка, если логгер недоступен
+    def log_action(*args, **kwargs):
+        pass  # Заглушка, если логгер недоступен
 
-# === Загрузка алиасов (с поддержкой системных типов на уровне группы) ===
+# === Загрузка алиасов (новая структура) ===
 def load_aliases():
-    """Загружает алиасы из групп и раскрывает составные ключи (через запятую).
-    Поддерживает дублирующиеся имена в разных группах.
-    Возвращает: {"улица": [{"object": ..., "property": ..., "category": "освещение", "type": "relay"}], ...}
+    """
+    Загружает алиасы из нового формата:
+    {
+      "свет": {
+        "type": "relay",
+        "devices": {
+          "улица": { "object": "Relay01", "property": "status" },
+          ...
+        }
+      },
+      ...
+    }
+    Поддерживает дублирующиеся имена в разных категориях.
+    Возвращает: {"улица": [spec1], "комната отдыха": [spec_свет, spec_температура]}
     """
     if not os.path.exists(ALIASES_FILE):
         return {}
     try:
         with open(ALIASES_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
+
         aliases = {}
-        for category, group_data in raw.items():
-            # group_data теперь содержит "type" и "devices"
-            group_type = group_data.get("type")
-            devices = group_data.get("devices", {})
-
-            if not group_type or not devices:
-                logger.warning(f"Пропущена группа '{category}' из-за отсутствия 'type' или 'devices': {group_data}")
+        for category, details in raw.items():
+            if "devices" not in details:
                 continue
-
-            for key, spec in devices.items():
-                obj = spec.get("object")
-                prop = spec.get("property")
-
-                if not obj or not prop:
-                    logger.warning(f"Пропущено устройство в группе '{category}' из-за отсутствия 'object' или 'property': {spec}")
-                    continue
-
+            for key, spec in details["devices"].items():
                 names = [name.strip().lower() for name in key.split(",")]
                 for name in names:
                     if name:
                         if name not in aliases:
                             aliases[name] = []
                         aliases[name].append({
-                            "object": obj,
-                            "property": prop,
-                            "category": category, # Сохраняем имя группы
-                            "type": group_type # Берём тип из группы
+                            "object": spec["object"],
+                            "property": spec["property"],
+                            "category": category,
+                            "type": details.get("type", "unknown")
                         })
         return aliases
     except Exception as e:
@@ -94,52 +94,60 @@ def normalize_query(query: str) -> str:
     query = query.lower().strip()
     patterns = [
         r'^(свет|освещение|статус)\s+(на|в)\s+',
-        r'^(температура|влажность|давление|газ|уровень)\s+(в|на)\s+',
-        r'^(свет|освещение|статус|температура|влажность|давление|газ|уровень)\s*',
+        r'^(температура|влажность|давление)\s+(в|на)\s+',
+        r'^(свет|освещение|статус|температура|влажность|давление)\s*',
         r'^(на|в)\s+'
     ]
     for pat in patterns:
         query = re.sub(pat, '', query)
-    # Убираем окончания 'е', 'у', 'ом'
     if query.endswith('е'): query = query[:-1]
     if query.endswith('у'): query = query[:-1]
     if query.endswith('ом'): query = query[:-2]
     return query.strip()
 
-# === Поиск устройства по типу (и/или категории) ===
-def find_device_by_category(alias_name: str, preferred_categories: list = None, preferred_types: list = None):
-    """Находит устройство по имени и предпочтительным типам/категориям.
-    Сначала ищет по типу, если указаны оба.
+# === Поиск устройства с учётом категории и типа ===
+def find_device_by_category_and_type(alias_name: str, preferred_categories: list = None, required_type: str = None):
+    """
+    Находит устройство по имени, предпочтительным категориям и/или типу.
+    Возвращает первую подходящую спецификацию.
     """
     aliases = load_aliases()
     if alias_name not in aliases:
         return None
 
     specs = aliases[alias_name]
-
-    # Если указаны предпочтительные типы, ищем сначала по ним
-    if preferred_types:
-        for spec in specs:
-            if spec["type"] in preferred_types:
-                # Если также указаны категории, проверяем и их
-                if preferred_categories and spec["category"] in preferred_categories:
-                    return spec
-                elif not preferred_categories: # Если категории не указаны, подходит тип
-                    return spec
-    # Если типы не указаны или не найдены, ищем по категориям
-    elif preferred_categories:
+    # Сначала ищем по предпочтительным категориям
+    if preferred_categories:
         for spec in specs:
             if spec["category"] in preferred_categories:
+                # Если требуется определённый тип, проверяем его
+                if required_type and spec["type"] != required_type:
+                    continue
                 return spec
+    # Если не нашли по категориям, ищем по требуемому типу
+    if required_type:
+        for spec in specs:
+            if spec["type"] == required_type:
+                return spec
+    # Если не нашли ни по категории, ни по типу, возвращаем первую
+    return specs[0] if specs else None
 
-    # Если ничего не подошло, возвращаем первую
-    return specs[0]
+# === TTS (ищет только в категории "колонки") ===
+def say_via_tts(text: str, room: str = "комната отдыха") -> bool:
+    """Озвучивает текст через колонку в указанной комнате."""
+    alias_name = normalize_query(room)
+    device_spec = find_device_by_category_and_type(alias_name, preferred_categories=["колонки"])
+    if not device_spec:
+        logger.warning(f"Колонка не найдена для комнаты: {room}")
+        return False
+
+    resp = call_majordomo("GET", f"method/{device_spec['object']}.say", params={"text": text})
+    return resp is not None and resp.status_code == 200
 
 # === MCP-сервер ===
 mcp = FastMCP("Majordomo Universal")
 
-# === ОСНОВНЫЕ МЕТОДЫ (с поддержкой дубликатов и логированием, поиск по типу) ===
-
+# === СТАРЫЕ МЕТОДЫ (с поддержкой дубликатов и логированием) ===
 @mcp.tool()
 def get_property(object: str, property: str) -> dict:
     """Технический метод: получить свойство по object.property"""
@@ -165,65 +173,90 @@ def set_property(object: str, property: str, value: str) -> dict:
 
 @mcp.tool()
 def set_device(device_name: str, state: str) -> dict:
-    """Человекочитаемое управление с нормализацией и поддержкой дубликатов (по типу relay/device)"""
+    """Человекочитаемое управление с нормализацией и поддержкой дубликатов. Использует тип 'relay'."""
     norm_name = normalize_query(device_name)
-    # Ищем среди устройств типа relay или device
-    device_spec = find_device_by_category(norm_name, preferred_types=["relay", "device"])
+    device_spec = find_device_by_category_and_type(
+        norm_name,
+        preferred_categories=["свет", "устройства"],
+        required_type="relay" # Только реле
+    )
     if not device_spec:
         aliases = load_aliases()
-        # Формируем список только релевантных алиасов
-        relevant_aliases = []
-        for alias_name, specs in aliases.items():
-            for spec in specs:
-                if spec["type"] in ["relay", "device"]:
-                    relevant_aliases.append(alias_name)
-                    break # Добавляем алиас, если хотя бы один из его экземпляров подходит
-        available = ", ".join(sorted(set(relevant_aliases)))
-        log_action(source="mcp", user="xiaozhi", action="set_device", target=device_name, success=False, details={"error": "Устройство не найдено", "available": available})
-        return {"error": f"Устройство '{device_name}' не найдено. Доступные: {available}"}
+        available = ", ".join(aliases.keys())
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=device_name,
+            success=False,
+            details={"error": "Устройство (реле) не найдено", "available": available}
+        )
+        return {"error": f"Устройство (реле) '{device_name}' не найдено. Доступные: {available}"}
 
-    value = "1" if state.lower() in ("включи", "включить", "on", "1", "да", "зажги", "активируй", "включи свет") else "0"
+    value = "1" if state.lower() in ("включи", "включить", "on", "1", "да") else "0"
     result = set_property(device_spec["object"], device_spec["property"], value)
     if "success" in result:
-        log_action(source="mcp", user="xiaozhi", action="set_device", target=norm_name, success=True, details={"state": "включено" if value == "1" else "выключено", "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=norm_name,
+            success=True,
+            details={"state": "включено" if value == "1" else "выключено"}
+        )
     else:
-        log_action(source="mcp", user="xiaozhi", action="set_device", target=norm_name, success=False, details={"error": result.get("error", "Unknown error"), "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device",
+            target=norm_name,
+            success=False,
+            details={"error": result.get("error", "Unknown error")}
+        )
     return result
 
 @mcp.tool()
 def get_device(device_name: str) -> dict:
-    """Человекочитаемый статус с нормализацией и поддержкой дубликатов (по всем типам)"""
+    """Человекочитаемый статус с нормализацией и поддержкой дубликатов. Использует тип 'relay'."""
     norm_name = normalize_query(device_name)
-    # Ищем среди всех типов
-    device_spec = find_device_by_category(norm_name)
+    device_spec = find_device_by_category_and_type(
+        norm_name,
+        preferred_categories=["свет", "устройства"],
+        required_type="relay" # Только реле
+    )
     if not device_spec:
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=device_name, success=False, details={"error": "Устройство не найдено"})
-        return {"error": f"Устройство '{device_name}' не найдено."}
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device",
+            target=device_name,
+            success=False,
+            details={"error": "Устройство (реле) не найдено"}
+        )
+        return {"error": f"Устройство (реле) '{device_name}' не найдено."}
 
     result = get_property(device_spec["object"], device_spec["property"])
     if "error" in result:
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=norm_name, success=False, details={"error": result["error"], "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device",
+            target=norm_name,
+            success=False,
+            details={"error": result["error"]}
+        )
         return result
 
-    # Формируем ответ в зависимости от типа устройства
-    if device_spec["type"] in ["relay", "device"]:
-        status = "включено" if result["value"] == "1" else "выключено"
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=norm_name, success=True, details={"status": status, "raw_value": result["value"], "type": device_spec["type"]})
-        return {"device": device_name, "status": status, "raw_value": result["value"], "type": device_spec["type"]}
-    elif device_spec["type"] == "sensors":
-        # Для сенсоров возвращаем просто значение, предполагая, что оно уже человекочитаемо
-        # или можно добавить логику форматирования в зависимости от свойства
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=norm_name, success=True, details={"value": result["value"], "type": device_spec["type"], "raw_value": result["value"]})
-        return {"device": device_name, "value": result["value"], "type": device_spec["type"], "raw_value": result["value"]}
-    elif device_spec["type"] == "media":
-        # Для media можно возвращать статус воспроизведения или текущую песню
-        # Пока возвращаем raw_value
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=norm_name, success=True, details={"status": result["value"], "type": device_spec["type"], "raw_value": result["value"]})
-        return {"device": device_name, "status": result["value"], "type": device_spec["type"], "raw_value": result["value"]}
-    else:
-        # Неизвестный тип
-        log_action(source="mcp", user="xiaozhi", action="get_device", target=norm_name, success=True, details={"raw_value": result["value"], "type": device_spec["type"]})
-        return {"device": device_name, "raw_value": result["value"], "type": device_spec["type"]}
+    status = "включено" if result["value"] == "1" else "выключено"
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="get_device",
+        target=norm_name,
+        success=True,
+        details={"status": status, "raw_value": result["value"]}
+    )
+    return {"device": device_name, "status": status, "raw_value": result["value"]}
 
 @mcp.tool()
 def list_devices() -> dict:
@@ -253,32 +286,43 @@ def get_room(room_id: str) -> dict:
             return {"error": "Invalid JSON response"}
     return {"error": f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"}
 
-# === НОВЫЕ МЕТОДЫ (с TTS, поддержкой дубликатов и логированием, поиск по типу) ===
-
+# === НОВЫЕ МЕТОДЫ (с TTS, поддержкой дубликатов, логированием и учётом типа) ===
 @mcp.tool()
 def control_device(device_query: str, action: str, tts_feedback: bool = True) -> dict:
-    """Управление с TTS и поддержкой дублирующихся алиасов (по типу relay/device)
-    Управляет устройством: включает или выключает.
+    """
+    Управление реле (тип 'relay') с TTS и поддержкой дублирующихся алиасов.
     Используй, когда пользователь говорит: 'включи свет в комнате отдыха', 'выключи улицу'.
+    Не используй, если пользователь говорит 'через 1 минуту' или 'в 15:30'.
     """
     norm_query = normalize_query(device_query)
-    logger.info(f"Запрос управления: '{device_query}' → нормализовано: '{norm_query}'")
+    logger.info(f"Запрос: '{device_query}' → нормализовано: '{norm_query}'")
 
-    # Ищем среди устройств типа relay или device
-    device_spec = find_device_by_category(norm_query, preferred_types=["relay", "device"])
+    # Ищем устройство в категориях свет/устройств с типом relay
+    device_spec = find_device_by_category_and_type(
+        norm_query,
+        preferred_categories=["свет", "устройства"],
+        required_type="relay" # Только реле
+    )
     if not device_spec:
+        # Формируем список ТОЛЬКО релевантных алиасов (реле)
         aliases = load_aliases()
-        # Формируем список только релевантных алиасов
         relevant_aliases = []
         for alias_name, specs in aliases.items():
             for spec in specs:
-                if spec["type"] in ["relay", "device"]:
+                if spec["category"] in ["свет", "устройства"] and spec["type"] == "relay":
                     relevant_aliases.append(alias_name)
-                    break # Добавляем алиас, если хотя бы один из его экземпляров подходит
+                    break
         available = ", ".join(sorted(set(relevant_aliases)))
-        logger.info(f"Не найдено. Доступные: {available}")
-        log_action(source="mcp", user="xiaozhi", action="control_device", target=device_query, success=False, details={"error": "Устройство не найдено", "available": available})
-        return {"error": f"Не найдено: '{device_query}'. Доступные: {available}"}
+        logger.info(f"Не найдено. Доступные реле: {available}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=device_query,
+            success=False,
+            details={"error": "Устройство (реле) не найдено", "available": available}
+        )
+        return {"error": f"Не найдено (реле): '{device_query}'. Доступные: {available}"}
 
     # Гибкая обработка действия
     action_lower = action.lower()
@@ -289,33 +333,125 @@ def control_device(device_query: str, action: str, tts_feedback: bool = True) ->
         value = "0"
         state_word = "выключен"
     else:
-        log_action(source="mcp", user="xiaozhi", action="control_device", target=device_query, success=False, details={"error": f"Неизвестное действие: '{action}'", "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=device_query,
+            success=False,
+            details={"error": f"Неизвестное действие: '{action}'"}
+        )
         return {"error": f"Неизвестное действие: '{action}'. Используйте 'включи' или 'выключи'."}
 
     # Выполнение команды
     resp = call_majordomo("POST", f"data/{device_spec['object']}.{device_spec['property']}", data={"data": value})
     if resp and resp.status_code == 200:
         if tts_feedback:
-            # say_via_tts(f"{norm_query} {state_word}")
-            pass # Пока без TTS
-        logger.info(f"Устройство {device_spec['object']} ({norm_query}) {state_word}")
-        log_action(source="mcp", user="xiaozhi", action="control_device", target=norm_query, success=True, details={"state": state_word, "type": device_spec["type"]})
-        return {"success": True, "device": device_query, "action": state_word, "type": device_spec["type"]}
+            say_via_tts(f"Свет в {norm_query} {state_word}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=norm_query,
+            success=True,
+            details={"state": state_word, "device_query": device_query, "action": action}
+        )
+        return {"success": True, "target": norm_query, "state": state_word}
     else:
         error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
-        logger.error(error_msg)
-        log_action(source="mcp", user="xiaozhi", action="control_device", target=norm_query, success=False, details={"error": error_msg, "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="control_device",
+            target=norm_query,
+            success=False,
+            details={"error": error_msg, "device_query": device_query}
+        )
         return {"error": error_msg}
 
 @mcp.tool()
 def get_device_status(device_query: str, tts_feedback: bool = True) -> dict:
-    """Статус с TTS и поддержкой дублирующихся алиасов (по всем типам)"""
+    """Статус реле (тип 'relay') с TTS и поддержкой дублирующихся алиасов."""
     norm_query = normalize_query(device_query)
-    # Ищем среди всех типов
-    device_spec = find_device_by_category(norm_query)
+    device_spec = find_device_by_category_and_type(
+        norm_query,
+        preferred_categories=["свет", "устройства"],
+        required_type="relay" # Только реле
+    )
     if not device_spec:
-        log_action(source="mcp", user="xiaozhi", action="get_device_status", target=device_query, success=False, details={"error": "Устройство не найдено"})
-        return {"error": f"Не найдено: '{device_query}'"}
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device_status",
+            target=device_query,
+            success=False,
+            details={"error": "Устройство (реле) не найдено"}
+        )
+        return {"error": f"Не найдено (реле): '{device_query}'"}
+
+    resp = call_majordomo("GET", f"data/{device_spec['object']}.{device_spec['property']}")
+    if resp and resp.status_code == 200:
+        try:
+            value = resp.json().get("data", resp.text.strip())
+        except:
+            value = resp.text.strip()
+        status = "включено" if value == "1" else "выключено"
+        if tts_feedback:
+            say_via_tts(f"Свет в {norm_query} {status}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_device_status",
+            target=norm_query,
+            success=True,
+            details={"status": status, "value": value, "device_query": device_query}
+        )
+        return {"device": norm_query, "status": status}
+    error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="get_device_status",
+        target=norm_query,
+        success=False,
+        details={"error": error_msg, "device_query": device_query}
+    )
+    return {"error": error_msg}
+
+@mcp.tool()
+def get_sensor_value(sensor_query: str, unit: str = "", tts_feedback: bool = True) -> dict:
+    """
+    Чтение значения сенсора (тип 'sensors') с TTS и поддержкой дублирующихся алиасов.
+    unit: строка для озвучивания, например, "градусов", "процентов", "Паскаль".
+    """
+    norm_query = normalize_query(sensor_query)
+    logger.info(f"Запрос сенсора: '{sensor_query}' → нормализовано: '{norm_query}'")
+
+    # Ищем устройство с типом sensors
+    device_spec = find_device_by_category_and_type(
+        norm_query,
+        required_type="sensors" # Только сенсоры
+    )
+    if not device_spec:
+        # Формируем список ТОЛЬКО сенсоров
+        aliases = load_aliases()
+        relevant_aliases = []
+        for alias_name, specs in aliases.items():
+            for spec in specs:
+                if spec["type"] == "sensors":
+                    relevant_aliases.append(alias_name)
+                    break
+        available = ", ".join(sorted(set(relevant_aliases)))
+        logger.info(f"Сенсор не найден. Доступные: {available}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_sensor_value",
+            target=sensor_query,
+            success=False,
+            details={"error": "Сенсор не найден", "available": available}
+        )
+        return {"error": f"Сенсор не найден: '{sensor_query}'. Доступные: {available}"}
 
     resp = call_majordomo("GET", f"data/{device_spec['object']}.{device_spec['property']}")
     if resp and resp.status_code == 200:
@@ -324,167 +460,302 @@ def get_device_status(device_query: str, tts_feedback: bool = True) -> dict:
         except:
             value = resp.text.strip()
 
-        # Определяем статус в зависимости от типа
-        if device_spec["type"] in ["relay", "device"]:
-            status = "включено" if value == "1" else "выключено"
-            if tts_feedback:
-                # say_via_tts(f"Свет в {norm_query} {status}")
-                pass # Пока без TTS
-            log_action(source="mcp", user="xiaozhi", action="get_device_status", target=norm_query, success=True, details={"status": status, "value": value, "type": device_spec["type"]})
-            return {"device": device_query, "status": status, "type": device_spec["type"]}
-        elif device_spec["type"] == "sensors":
-            if tts_feedback:
-                # say_via_tts(f"Значение {norm_query}: {value}")
-                pass # Пока без TTS
-            log_action(source="mcp", user="xiaozhi", action="get_device_status", target=norm_query, success=True, details={"value": value, "type": device_spec["type"]})
-            return {"device": device_query, "value": value, "type": device_spec["type"]}
-        else: # media или другие
-            if tts_feedback:
-                # say_via_tts(f"Статус {norm_query}: {value}")
-                pass # Пока без TTS
-            log_action(source="mcp", user="xiaozhi", action="get_device_status", target=norm_query, success=True, details={"raw_value": value, "type": device_spec["type"]})
-            return {"device": device_query, "raw_value": value, "type": device_spec["type"]}
+        if tts_feedback:
+            say_via_tts(f"В {norm_query} {value} {unit}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_sensor_value",
+            target=norm_query,
+            success=True,
+            details={"value": value, "unit": unit, "sensor_query": sensor_query}
+        )
+        return {"sensor": norm_query, "value": value, "unit": unit}
     else:
         error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
-        logger.error(error_msg)
-        log_action(source="mcp", user="xiaozhi", action="get_device_status", target=norm_query, success=False, details={"error": error_msg, "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="get_sensor_value",
+            target=norm_query,
+            success=False,
+            details={"error": error_msg, "sensor_query": sensor_query}
+        )
         return {"error": error_msg}
 
-# --- НОВЫЕ ИНСТРУМЕНТЫ ДЛЯ ПОИСКА ПО НАЗВАНИЮ ГРУППЫ (ДЛЯ ДЕМОНСТРАЦИИ) ---
-# Эти инструменты ищут устройства по названию группы (например, "освещение", "температура")
-# и затем применяют соответствующую логику (управление для relay, получение значения для sensors).
-
 @mcp.tool()
-def control_relay_by_category_name(category_name: str, location: str, action: str, tts_feedback: bool = True) -> dict:
-    """Управление реле по названию группы и местоположению (например, включи освещение в комнате отдыха).
-    category_name: "освещение", "свет" и т.д. (название группы, содержащей relay)
-    location: "комната отдыха", "кухня" и т.д. (алиас устройства)
-    action: "включи", "выключи"
+def set_device_parameter(device_query: str, parameter: str, value: str, tts_feedback: bool = True) -> dict:
     """
-    # Загрузим все алиасы
-    aliases = load_aliases()
-    # Найдём все алиасы, принадлежащие группе с именем category_name и типом relay
-    relevant_specs = []
-    full_aliases_data = {}
-    if os.path.exists(ALIASES_FILE):
-        with open(ALIASES_FILE, "r", encoding="utf-8") as f:
-            full_aliases_data = json.load(f)
+    Установка параметра устройства (тип 'device') с TTS и поддержкой дубликаций.
+    Используется, например, для установки температуры.
+    """
+    norm_query = normalize_query(device_query)
+    logger.info(f"Запрос установки параметра: '{device_query}' → нормализовано: '{norm_query}', параметр: '{parameter}', значение: '{value}'")
 
-    if category_name in full_aliases_data and full_aliases_data[category_name].get("type") == "relay":
-        devices_in_group = full_aliases_data[category_name].get("devices", {})
-        for key, spec in devices_in_group.items():
-            names = [n.strip().lower() for n in key.split(",")]
-            for name in names:
-                if name == location.lower(): # Найдено совпадение по местоположению
-                    relevant_specs.append({
-                        "object": spec["object"],
-                        "property": spec["property"],
-                        "category": category_name,
-                        "type": "relay"
-                    })
-                    break # Нашли в этой группе, выходим из цикла по именам
-
-    if not relevant_specs:
-         log_action(source="mcp", user="xiaozhi", action="control_relay_by_category_name", target=f"{category_name} {location}", success=False, details={"error": f"Устройство не найдено в группе '{category_name}'", "type": "relay"})
-         return {"error": f"Устройство '{location}' не найдено в группе '{category_name}'."}
-
-    # Берём первое найденное устройство
-    device_spec = relevant_specs[0]
-    logger.info(f"Найдено устройство для управления по группе и местоположению: {device_spec}")
-
-    # Гибкая обработка действия
-    action_lower = action.lower()
-    if any(word in action_lower for word in ["включи", "включить", "on", "1", "да", "зажги", "активируй", "включи свет"]):
-        value = "1"
-        state_word = "включён"
-    elif any(word in action_lower for word in ["выключи", "выключить", "off", "0", "нет", "потуши", "деактивируй", "выключи свет"]):
-        value = "0"
-        state_word = "выключен"
-    else:
-        log_action(source="mcp", user="xiaozhi", action="control_relay_by_category_name", target=f"{category_name} {location}", success=False, details={"error": f"Неизвестное действие: '{action}'", "type": device_spec["type"]})
-        return {"error": f"Неизвестное действие: '{action}'. Используйте 'включи' или 'выключи'."}
+    # Ищем устройство с типом device
+    device_spec = find_device_by_category_and_type(
+        norm_query,
+        required_type="device" # Только устройства с параметрами
+    )
+    if not device_spec:
+        # Формируем список ТОЛЬКО устройств с параметрами
+        aliases = load_aliases()
+        relevant_aliases = []
+        for alias_name, specs in aliases.items():
+            for spec in specs:
+                if spec["type"] == "device":
+                    relevant_aliases.append(alias_name)
+                    break
+        available = ", ".join(sorted(set(relevant_aliases)))
+        logger.info(f"Устройство (device) не найдено. Доступные: {available}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device_parameter",
+            target=device_query,
+            success=False,
+            details={"error": "Устройство (device) не найдено", "available": available}
+        )
+        return {"error": f"Устройство (device) не найдено: '{device_query}'. Доступные: {available}"}
 
     # Выполнение команды
-    resp = call_majordomo("POST", f"data/{device_spec['object']}.{device_spec['property']}", data={"data": value})
+    resp = call_majordomo("POST", f"data/{device_spec['object']}.{device_spec['property']}", data={"data": str(value)})
     if resp and resp.status_code == 200:
         if tts_feedback:
-            # say_via_tts(f"{location} {state_word}")
-            pass # Пока без TTS
-        logger.info(f"Устройство {device_spec['object']} ({category_name} {location}) {state_word}")
-        log_action(source="mcp", user="xiaozhi", action="control_relay_by_category_name", target=f"{category_name} {location}", success=True, details={"state": state_word, "type": device_spec["type"]})
-        return {"success": True, "group": category_name, "location": location, "action": state_word, "type": device_spec["type"]}
+            say_via_tts(f"Параметр {parameter} в {norm_query} установлен на {value}")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device_parameter",
+            target=norm_query,
+            success=True,
+            details={"parameter": parameter, "value": value, "device_query": device_query}
+        )
+        return {"success": True, "target": norm_query, "parameter": parameter, "value": value}
     else:
         error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
-        logger.error(error_msg)
-        log_action(source="mcp", user="xiaozhi", action="control_relay_by_category_name", target=f"{category_name} {location}", success=False, details={"error": error_msg, "type": device_spec["type"]})
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="set_device_parameter",
+            target=norm_query,
+            success=False,
+            details={"error": error_msg, "device_query": device_query}
+        )
         return {"error": error_msg}
+
 
 @mcp.tool()
-def get_sensor_by_category_name(category_name: str, location: str, tts_feedback: bool = True) -> dict:
-    """Получение значения сенсора по названию группы и местоположению (например, какая температура в комнате отдыха).
-    category_name: "температура", "влажность" и т.д. (название группы, содержащей sensors)
-    location: "комната отдыха", "душ" и т.д. (алиас устройства)
-    """
-    # Загрузим все алиасы
-    aliases = load_aliases()
-    # Найдём все алиасы, принадлежащие группе с именем category_name и типом sensors
-    relevant_specs = []
-    full_aliases_data = {}
-    if os.path.exists(ALIASES_FILE):
-        with open(ALIASES_FILE, "r", encoding="utf-8") as f:
-            full_aliases_data = json.load(f)
-
-    if category_name in full_aliases_data and full_aliases_data[category_name].get("type") == "sensors":
-        devices_in_group = full_aliases_data[category_name].get("devices", {})
-        for key, spec in devices_in_group.items():
-            names = [n.strip().lower() for n in key.split(",")]
-            for name in names:
-                if name == location.lower(): # Найдено совпадение по местоположению
-                    relevant_specs.append({
-                        "object": spec["object"],
-                        "property": spec["property"],
-                        "category": category_name,
-                        "type": "sensors"
-                    })
-                    break # Нашли в этой группе, выходим из цикла по именам
-
-    if not relevant_specs:
-         log_action(source="mcp", user="xiaozhi", action="get_sensor_by_category_name", target=f"{category_name} {location}", success=False, details={"error": f"Сенсор не найден в группе '{category_name}'", "type": "sensors"})
-         return {"error": f"Сенсор '{location}' не найден в группе '{category_name}'."}
-
-    # Берём первое найденное устройство
-    device_spec = relevant_specs[0]
-    logger.info(f"Найден сенсор для получения значения по группе и местоположению: {device_spec}")
-
-    # Получение значения
-    resp = call_majordomo("GET", f"data/{device_spec['object']}.{device_spec['property']}")
+def run_script(script_name: str, tts_feedback: bool = True) -> dict:
+    """Запуск сценария"""
+    resp = call_majordomo("GET", f"script/{script_name}")
     if resp and resp.status_code == 200:
-        try:
-            value = resp.json().get("data", resp.text.strip())
-        except:
-            value = resp.text.strip()
-
-        # Форматирование ответа в зависимости от типа сенсора (по названию группы)
-        if "температура" in category_name.lower():
-            response_text = f"температура в {location} {value} градусов"
-        elif "влажность" in category_name.lower():
-            response_text = f"влажность в {location} {value} процентов"
-        else:
-            # Для других типов сенсоров
-            response_text = f"значение {category_name} в {location} {value}"
-
         if tts_feedback:
-            # say_via_tts(response_text)
-            pass # Пока без TTS
-        logger.info(f"Значение {category_name} в {location}: {value}")
-        log_action(source="mcp", user="xiaozhi", action="get_sensor_by_category_name", target=f"{category_name} {location}", success=True, details={"value": value, "response_text": response_text, "type": device_spec["type"]})
-        return {"sensor_group": category_name, "location": location, "value": value, "response": response_text, "type": device_spec["type"]}
+            say_via_tts(f"Сценарий {script_name} запущен")
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="run_script",
+            target=script_name,
+            success=True
+        )
+        return {"success": True, "script": script_name}
     else:
-        error_msg = f"MajorDoMo error: {resp.status_code if resp else 'timeout'}"
-        logger.error(error_msg)
-        log_action(source="mcp", user="xiaozhi", action="get_sensor_by_category_name", target=f"{category_name} {location}", success=False, details={"error": error_msg, "type": device_spec["type"]})
+        error_msg = f"Сценарий '{script_name}' не запущен"
+        log_action(
+            source="mcp",
+            user="xiaozhi",
+            action="run_script",
+            target=script_name,
+            success=False,
+            details={"error": error_msg}
+        )
         return {"error": error_msg}
 
+# === ГОЛОСОВОЕ УПРАВЛЕНИЕ ПЛАНИРОВЩИКОМ ===
+import subprocess
+from datetime import datetime, timedelta
+
+SCHEDULE_FILE = "/opt/mcp-bridge/schedule.json"
+
+def load_schedule():
+    if not os.path.exists(SCHEDULE_FILE):
+        return []
+    with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_schedule(schedule):
+    with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+        json.dump(schedule, f, ensure_ascii=False, indent=2)
+
+def reload_scheduler():
+    """Перезапускает сервис планировщика."""
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "mcp-scheduler"], check=True)
+    except subprocess.CalledProcessError:
+        pass  # Игнорируем ошибки, если сервис не нуждается в перезапуске
+
+@mcp.tool()
+def add_scheduler_task(time_str: str, device: str, action: str, repeat_days: list = None) -> dict:
+    """
+    Добавляет задание в планировщик.
+    time_str: "HH:MM" (например, "17:15")
+    device: имя устройства (например, "улица")
+    action: "включи" или "выключи"
+    repeat_days: ["mon", "tue", ...] или None (одноразовое)
+    """
+    schedule = load_schedule()
+    # Генерируем ID на основе времени и устройства
+    task_id = f"voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{device.replace(' ', '_')}"
+
+    # === НОВОЕ: Если repeat_days не указан, считаем одноразовым ===
+    if repeat_days is None:
+        repeat_days = ["once"]
+    # ===
+
+    new_task = {
+        "id": task_id,
+        "enabled": True,
+        "description": f"Голосовое задание: {action} {device}",
+        "time": time_str,
+        "days": repeat_days,  # Теперь может быть и постоянным
+        "action": {
+            "type": "device",
+            "device": device,
+            "state": action
+        }
+    }
+    schedule.append(new_task)
+    save_schedule(schedule)
+    reload_scheduler()
+
+    # Логируем
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="add_scheduler_task",
+        target=task_id,
+        success=True,
+        details={"time": time_str, "device": device, "action": action, "repeat_days": repeat_days}
+    )
+    return {"success": True, "message": f"Задание добавлено: {action} {device} в {time_str} {'каждый день' if repeat_days == ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] else 'по дням: ' + ', '.join(repeat_days)}"}
+
+@mcp.tool()
+def delete_scheduler_task(task_id: str) -> dict:
+    """
+    Удаляет задание из планировщика по ID.
+    """
+    schedule = load_schedule()
+    original_count = len(schedule)
+    schedule = [task for task in schedule if task["id"] != task_id]
+    if len(schedule) == original_count:
+        return {"success": False, "message": f"Задание с ID '{task_id}' не найдено"}
+
+    save_schedule(schedule)
+    reload_scheduler()
+
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="delete_scheduler_task",
+        target=task_id,
+        success=True
+    )
+    return {"success": True, "message": f"Задание '{task_id}' удалено"}
+
+@mcp.tool()
+def delete_all_scheduler_tasks() -> dict:
+    """
+    Удаляет ВСЕ задания из планировщика.
+    """
+    schedule = load_schedule()
+    original_count = len(schedule)
+    if original_count == 0:
+        return {"success": True, "message": "Нет заданий для удаления"}
+
+    # Оставляем только отключённые задания (если такие есть)
+    schedule = [task for task in schedule if not task["enabled"]]
+    save_schedule(schedule)
+    reload_scheduler()
+
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="delete_all_scheduler_tasks",
+        target="all",
+        success=True,
+        details={"deleted_count": original_count}
+    )
+    return {"success": True, "message": f"Все задания ({original_count}) удалены"}
+
+@mcp.tool()
+def list_scheduler_tasks() -> dict:
+    """
+    Возвращает список текущих заданий.
+    """
+    schedule = load_schedule()
+    active_tasks = [task for task in schedule if task["enabled"]]
+    if not active_tasks:
+        message = "Нет активных заданий."
+    else:
+        task_list = []
+        for task in active_tasks:
+            time = task.get("time", "неизвестно")
+            device = task["action"].get("device", "неизвестно")
+            action = task["action"].get("state", "неизвестно")
+            desc = task.get("description", f"{action} {device}")
+            task_list.append(f"{time} — {desc}")
+        message = "Активные задания: " + "; ".join(task_list)
+
+    # Логируем
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="list_scheduler_tasks",
+        target="all",
+        success=True,
+        details={"count": len(active_tasks)}
+    )
+    return {"tasks": active_tasks, "message": message}
+
+@mcp.tool()
+def add_temporary_scheduler_task(minutes_from_now: int, device: str, action: str) -> dict:
+    """
+    Добавляет задание, которое выполнится через N минут.
+    minutes_from_now: int
+    device: имя устройства
+    action: "включи" или "выключи"
+    """
+    future_time = datetime.now() + timedelta(minutes=minutes_from_now)
+    time_str = future_time.strftime("%H:%M")
+    schedule = load_schedule()
+    task_id = f"voice_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{device.replace(' ', '_')}"
+
+    new_task = {
+        "id": task_id,
+        "enabled": True,
+        "description": f"Временное задание: {action} {device} через {minutes_from_now} мин",
+        "time": time_str,
+        "days": ["once"],  # Одноразовое
+        "action": {
+            "type": "device",
+            "device": device,
+            "state": action
+        }
+    }
+    schedule.append(new_task)
+    save_schedule(schedule)
+    reload_scheduler()
+
+    log_action(
+        source="mcp",
+        user="xiaozhi",
+        action="add_temporary_scheduler_task",
+        target=task_id,
+        success=True,
+        details={"time": time_str, "device": device, "action": action, "minutes_delay": minutes_from_now}
+    )
+    return {"success": True, "message": f"Задание добавлено: {action} {device} через {minutes_from_now} минут"}
 
 # === Запуск ===
 if __name__ == "__main__":

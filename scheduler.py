@@ -31,9 +31,19 @@ logger = logging.getLogger("Scheduler")
 
 def load_aliases():
     """
-    Загружает алиасы и раскрывает составные ключи (через запятую).
+    Загружает алиасы из нового формата:
+    {
+      "свет": {
+        "type": "relay",
+        "devices": {
+          "улица": { "object": "Relay01", "property": "status" },
+          ...
+        }
+      },
+      ...
+    }
     Поддерживает дублирующиеся имена в разных категориях.
-    Возвращает: {"улица": [spec1], "комната отдыха": [spec_освещение, spec_колонки]}
+    Возвращает: {"улица": [spec1], "комната отдыха": [spec_свет, spec_температура]}
     """
     if not os.path.exists(ALIASES_FILE):
         logger.warning(f"Файл алиасов не найден: {ALIASES_FILE}")
@@ -44,8 +54,10 @@ def load_aliases():
             raw = json.load(f)
 
         aliases = {}
-        for category, devices in raw.items():
-            for key, spec in devices.items():
+        for category, details in raw.items():
+            if "devices" not in details:
+                continue
+            for key, spec in details["devices"].items():
                 names = [name.strip().lower() for name in key.split(",")]
                 for name in names:
                     if name:
@@ -54,7 +66,8 @@ def load_aliases():
                         aliases[name].append({
                             "object": spec["object"],
                             "property": spec["property"],
-                            "category": category
+                            "category": category,
+                            "type": details.get("type", "unknown")
                         })
         return aliases
     except Exception as e:
@@ -66,8 +79,8 @@ def normalize_query(query: str) -> str:
     query = query.lower().strip()
     patterns = [
         r'^(свет|освещение|статус)\s+(на|в)\s+',
-        r'^(температура|влажность)\s+(в|на)\s+',
-        r'^(свет|освещение|статус|температура|влажность)\s*',
+        r'^(температура|влажность|давление)\s+(в|на)\s+',
+        r'^(свет|освещение|статус|температура|влажность|давление)\s*',
         r'^(на|в)\s+'
     ]
     for pat in patterns:
@@ -77,19 +90,30 @@ def normalize_query(query: str) -> str:
     if query.endswith('ом'): query = query[:-2]
     return query.strip()
 
-def find_device_by_category(alias_name: str, preferred_categories: list = None):
-    """Находит устройство по имени и предпочтительным категориям."""
+def find_device_by_category_and_type(alias_name: str, preferred_categories: list = None, required_type: str = None):
+    """
+    Находит устройство по имени, предпочтительным категориям и/или типу.
+    Возвращает первую подходящую спецификацию.
+    """
     aliases = load_aliases()
     if alias_name not in aliases:
         return None
-    
+
     specs = aliases[alias_name]
-    
+    # Сначала ищем по предпочтительным категориям
     if preferred_categories:
         for spec in specs:
             if spec["category"] in preferred_categories:
+                # Если требуется определённый тип, проверяем его
+                if required_type and spec["type"] != required_type:
+                    continue
                 return spec
-    
+    # Если не нашли по категориям, ищем по требуемому типу
+    if required_type:
+        for spec in specs:
+            if spec["type"] == required_type:
+                return spec
+    # Если не нашли ни по категории, ни по типу, возвращаем первую
     return specs[0] if specs else None
 
 def call_majordomo(method, path, data=None):
@@ -136,7 +160,7 @@ def send_telegram_error(message):
     
     try:
         import requests as req
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"  # ← Исправлено: убраны лишние пробелы
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": f"🚨 Ошибка в планировщике:\n{message}",
@@ -159,11 +183,15 @@ def execute_task(task):
             device_name = action["device"].lower()
             norm_name = normalize_query(device_name)
             
-            # Ищем в категориях освещения/устройств
-            dev = find_device_by_category(norm_name, ["освещение", "устройства"])
+            # Ищем в категориях свет/устройств с типом relay (для задач включения/выключения)
+            dev = find_device_by_category_and_type(
+                norm_name,
+                preferred_categories=["свет", "устройства"], # Обновлено: используем "свет"
+                required_type="relay" # Обновлено: ищем только реле
+            )
             
             if not dev:
-                error_msg = f"Устройство не найдено: {device_name}"
+                error_msg = f"Устройство (реле) не найдено: {device_name}"
                 logger.error(error_msg)
                 log_action("device", device_name, success=False, details={"task_id": task_id, "error": error_msg})
                 send_telegram_error(f"<b>Задача:</b> {description}\n{error_msg}")
