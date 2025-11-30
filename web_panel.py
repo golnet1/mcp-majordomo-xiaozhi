@@ -191,11 +191,29 @@ def update_from_github():
                 print(f"Обновлён файл: {file}", file=sys.stderr)
                 updated_any = True
 
+        try:
+            # Удаляем файл, если он существует
+            if os.path.isfile(zip_path):
+                os.remove(zip_path)
+                print(f"Файл {zip_path} удалён.")
+            else:
+                print(f"Файл {zip_path} не найден.")
+
+            # Удаляем папку и всё её содержимое, если она существует
+            if os.path.isdir(extract_dir):
+                shutil.rmtree(extract_dir)
+                print(f"Папка {extract_dir} и её содержимое удалены.")
+            else:
+                print(f"Папка {extract_dir} не найдена.")
+
+        except OSError as e:
+            print(f"Ошибка при удалении файлов: {e}")
+
         if not updated_any:
             raise Exception("Ни один файл не был обновлён")
 
         # Перезапускаем сервисы
-        subprocess.run(["sudo", "systemctl", "restart", "mcp-web-panel", "mcp-majordomo"], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "mcp-majordomo", "mcp-web-panel", "mcp-scheduler", "mcp-telegram-bot", "mcp-log-rotate"], check=True)
         return True
     except Exception as e:
         print(f"Ошибка обновления: {e}", file=sys.stderr)
