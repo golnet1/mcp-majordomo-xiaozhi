@@ -57,22 +57,13 @@
   "сенсоры_температура": {
     "type": "sensors",
     "devices": {
-      "парная": {
-        "object": "Steam",
-        "property": "getTemp"
-      },
       "комната отдыха": {
         "object": "Boiler_Dacha",
         "property": "TempInRoom"
-      }
-    }
-  },
-  "влажность": {
-    "type": "sensors",
-    "devices": {
-      "комната отдыха": {
-        "object": "HumiditySensor",
-        "property": "value"
+      },
+      "парная,сауна": {
+        "object": "Steam",
+        "property": "getTemp"
       }
     }
   },
@@ -81,7 +72,20 @@
     "devices": {
       "комната отдыха": {
         "object": "Boiler_Dacha",
-        "property": "TempInRoom"
+        "property": "setTempRoom"
+      },
+      "парная,сауна": {
+        "object": "Steam",
+        "property": "setTemp"
+      }
+    }
+  },
+  "сенсоры_влажность": {
+    "type": "sensors",
+    "devices": {
+      "комната отдыха": {
+        "object": "Steam",
+        "property": "getTemp"
       }
     }
   }

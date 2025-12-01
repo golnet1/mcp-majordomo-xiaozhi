@@ -778,8 +778,12 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
             border-radius: 4px;
         }
-        #search-container {
+        #controls-container {
             margin-bottom: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
         }
         #search-input {
             padding: 8px;
@@ -787,15 +791,20 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
             border-radius: 4px;
             background: var(--input-bg);
             color: var(--text);
-            width: 100%;
-            max-width: 400px;
+            flex-grow: 1;
+            min-width: 200px;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
         #logs {
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 16px;
-            max-height: 70vh;
+            max-height: 60vh; /* Уменьшено для места под навигацию */
             overflow-y: auto;
         }
         .log-entry {
@@ -815,25 +824,71 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
             text-decoration: none;
             border-radius: 4px;
         }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        .pagination button {
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            background: var(--input-bg);
+            color: var(--text);
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .pagination button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        .pagination-info {
+            white-space: nowrap; /* Не переносить текст внутри */
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Логи MajorDoMo MCP</h1>
-			<a href="/" class="back-link">← Назад</a>
+            <a href="/" class="back-link">← Назад</a>
             <button id="theme-toggle" onclick="toggleTheme()">🌓</button>
         </header>
-        <div id="search-container">
-            <input type="text" id="search-input" placeholder="Поиск в логах..." onkeyup="searchLogs()">
+        <div id="controls-container">
+            <input type="text" id="search-input" placeholder="Поиск в логах..." onkeyup="if(event.key === 'Enter') searchLogs()">
             <button onclick="searchLogs()">Найти</button>
             <button onclick="toggleAutoRefresh()">Автообновление: <span id="auto-refresh-status">Выкл</span></button>
+            <div class="control-group">
+                <label for="page-size">Строк на странице:</label>
+                <select id="page-size" onchange="changePageSize()">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option> <!-- По умолчанию 100 -->
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+            </div>
         </div>
         <div id="logs"></div>
+        <div class="pagination">
+            <button id="prev-page" onclick="prevPage()" disabled>Предыдущая</button>
+            <div class="pagination-info">
+                Страница <span id="current-page">1</span> из <span id="total-pages">1</span> (Всего записей: <span id="total-records">0</span>)
+            </div>
+            <button id="next-page" onclick="nextPage()" disabled>Следующая</button>
+        </div>
         <a id="export-link" class="export-link" href="/logs/export">📥 Экспорт CSV</a>
     </div>
     <script>
         let autoRefreshInterval = null;
+        let currentPage = 1;
+        let currentQuery = '';
+        let currentPageSize = 100; // Начальное значение
+        let totalRecords = 0;
+        let totalPages = 1;
 
         function toggleTheme() {
             const currentTheme = document.documentElement.getAttribute('data-theme');
@@ -848,12 +903,38 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
             if (savedTheme) {
                 document.documentElement.setAttribute('data-theme', savedTheme);
             }
+            // Загрузка начальных логов
+            loadLogs();
         });
 
-        async function loadLogs(query = '') {
+        async function loadLogs(query = '', page = 1, pageSize = 100) {
+            // Сохраняем параметры для будущего использования
+            currentQuery = query;
+            currentPage = page;
+            currentPageSize = pageSize;
+
             try {
-                const response = await fetch(`/logs/api?query=${encodeURIComponent(query)}`);
-                const logs = await response.json();
+                // Обновляем URL-параметры для экспорта
+                const exportUrl = `/logs/export?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`;
+                document.getElementById('export-link').href = exportUrl;
+
+                const response = await fetch(`/logs/api?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`);
+                const data = await response.json();
+                
+                // Предполагаем, что API возвращает объект { logs: [...], total: N }
+                const logs = data.logs || data; // Совместимость, если вдруг придет только массив
+                totalRecords = data.total || logs.length; // Если total нет, используем длину массива (не точно)
+                totalPages = Math.ceil(totalRecords / pageSize);
+
+                // Обновляем информацию о пагинации
+                document.getElementById('current-page').textContent = page;
+                document.getElementById('total-pages').textContent = totalPages;
+                document.getElementById('total-records').textContent = totalRecords;
+
+                // Включаем/выключаем кнопки
+                document.getElementById('prev-page').disabled = (page <= 1);
+                document.getElementById('next-page').disabled = (page >= totalPages);
+
                 document.getElementById('logs').innerHTML = logs.map(entry => `
                     <div class="log-entry">
                         <b>${new Date(entry.timestamp).toLocaleString()}</b> |
@@ -861,15 +942,41 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
                         ${entry.details ? `<br><small>${JSON.stringify(entry.details)}</small>` : ''}
                     </div>
                 `).join('');
-                document.getElementById('export-link').href = `/logs/export?query=${encodeURIComponent(query)}`;
+
             } catch (err) {
                 console.error('Ошибка загрузки логов:', err);
+                document.getElementById('logs').innerHTML = `<div class="log-entry log-error">Ошибка загрузки: ${err.message}</div>`;
+                // Сбрасываем информацию о пагинации при ошибке
+                document.getElementById('current-page').textContent = '1';
+                document.getElementById('total-pages').textContent = '1';
+                document.getElementById('total-records').textContent = '0';
+                document.getElementById('prev-page').disabled = true;
+                document.getElementById('next-page').disabled = true;
             }
         }
 
         function searchLogs() {
             const query = document.getElementById('search-input').value.trim();
-            loadLogs(query);
+            loadLogs(query, 1, currentPageSize); // Начинаем с первой страницы при новом поиске
+        }
+
+        function changePageSize() {
+            const newSize = parseInt(document.getElementById('page-size').value);
+            currentPageSize = newSize;
+            // При смене размера страницы, возвращаемся к первой странице
+            loadLogs(currentQuery, 1, currentPageSize);
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                loadLogs(currentQuery, currentPage - 1, currentPageSize);
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages) {
+                loadLogs(currentQuery, currentPage + 1, currentPageSize);
+            }
         }
 
         function toggleAutoRefresh() {
@@ -879,14 +986,15 @@ LOGS_TEMPLATE = """<!DOCTYPE html>
                 document.getElementById('auto-refresh-status').textContent = 'Выкл';
             } else {
                 autoRefreshInterval = setInterval(() => {
-                    const query = document.getElementById('search-input').value.trim();
-                    loadLogs(query);
+                    // При автообновлении, возможно, нужно оставаться на текущей странице
+                    // и использовать текущий размер страницы.
+                    // loadLogs(currentQuery, currentPage, currentPageSize);
+                    // Или сбросить на первую страницу при обновлении?
+                    loadLogs(currentQuery, 1, currentPageSize); // Пример: сброс на 1-ю страницу
                 }, 5000); // Обновление каждые 5 секунд
                 document.getElementById('auto-refresh-status').textContent = 'Вкл';
             }
         }
-
-        loadLogs();
     </script>
 </body>
 </html>"""
@@ -911,8 +1019,33 @@ def view_logs():
 @requires_auth
 def api_logs():
     query = request.args.get("query", "").strip()
-    logs = load_logs(limit=100, query=query)
-    return jsonify(logs)
+    try:
+        # Получаем номер страницы и размер страницы из параметров запроса
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 50))
+        if page < 1 or page_size < 1:
+            return jsonify({"error": "Номер страницы и размер должны быть положительными числами"}), 400
+    except ValueError:
+        return jsonify({"error": "Некорректные параметры страницы или размера"}), 400
+
+    # Загружаем ВСЕ логи, соответствующие запросу (ограничиваясь большим лимитом)
+    # Так как load_logs фильтрует по query, нам нужно получить все подходящие записи
+    all_logs = load_logs(limit=10000, query=query) # Увеличиваем лимит для пагинации
+
+    total_records = len(all_logs)
+
+    # Вычисляем индексы для текущей страницы
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+
+    # Получаем только логи для текущей страницы
+    logs_for_page = all_logs[start_index:end_index]
+
+    # Возвращаем объект с массивом логов и общим количеством записей
+    return jsonify({
+        "logs": logs_for_page,
+        "total": total_records
+    })
 
 @app.route("/logs/export")
 @requires_auth
