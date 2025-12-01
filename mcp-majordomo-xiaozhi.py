@@ -246,8 +246,8 @@ def get_device(device_name: str) -> dict:
             details={"error": result["error"]}
         )
         return result
-
-    status = "включено" if result["value"] == "1" else "выключено"
+    value_str = str(result["value"])
+    status = "включено" if value_str == "1" else "выключено"
     log_action(
         source="mcp",
         user="xiaozhi",
@@ -395,7 +395,8 @@ def get_device_status(device_query: str, tts_feedback: bool = True) -> dict:
             value = resp.json().get("data", resp.text.strip())
         except:
             value = resp.text.strip()
-        status = "включено" if value == "1" else "выключено"
+        value_str = str(value)
+        status = "включено" if value_str == "1" else "выключено"
         if tts_feedback:
             say_via_tts(f"Свет в {norm_query} {status}")
         log_action(
