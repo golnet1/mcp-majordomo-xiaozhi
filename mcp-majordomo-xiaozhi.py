@@ -775,6 +775,7 @@ def add_temporary_scheduler_task(minutes_from_now: int, device: str, action: str
     )
     return {"success": True, "message": f"Задание добавлено: {action} {device} через {minutes_from_now} минут"}
 
+
 # === Запуск ===
 if __name__ == "__main__":
     mcp.run(transport="stdio")
