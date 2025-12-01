@@ -118,15 +118,18 @@ def load_logs(limit=100, query=""):
         logs = []
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             for line in f:
-                if len(logs) >= limit:
-                    break
                 try:
                     entry = json.loads(line.strip())
                     if query.lower() in json.dumps(entry, ensure_ascii=False).lower():
                         logs.append(entry)
                 except json.JSONDecodeError:
                     continue
-        return logs
+
+        # Сортируем по timestamp от новых к старым (предполагаем ISO 8601 формат)
+        # и возвращаем только нужное количество (limit) с начала списка (самые новые)
+        logs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        return logs[:limit]
+
     except Exception as e:
         print(f"Ошибка чтения логов: {e}", file=sys.stderr)
         return []
@@ -1022,19 +1025,23 @@ def api_logs():
     try:
         # Получаем номер страницы и размер страницы из параметров запроса
         page = int(request.args.get("page", 1))
-        page_size = int(request.args.get("page_size", 50))
+        page_size = int(request.args.get("page_size", 100))
         if page < 1 or page_size < 1:
             return jsonify({"error": "Номер страницы и размер должны быть положительными числами"}), 400
     except ValueError:
         return jsonify({"error": "Некорректные параметры страницы или размера"}), 400
 
-    # Загружаем ВСЕ логи, соответствующие запросу (ограничиваясь большим лимитом)
-    # Так как load_logs фильтрует по query, нам нужно получить все подходящие записи
+    # Загружаем ВСЕ логи, соответствующие запросу, и сортируем их (новые сверху)
+    # load_logs уже сортирует и возвращает ограниченное количество
+    # Для пагинации нужно получить ВСЕ подходящие записи, отсортировать, и выбрать нужную страницу
     all_logs = load_logs(limit=10000, query=query) # Увеличиваем лимит для пагинации
 
+    # Теперь all_logs уже отсортирован от новых к старым
     total_records = len(all_logs)
 
-    # Вычисляем индексы для текущей страницы
+    # Вычисляем индексы для текущей страницы (в отсортированном списке)
+    # Страница 1 -> индексы 0...page_size-1
+    # Страница 2 -> индексы page_size...2*page_size-1
     start_index = (page - 1) * page_size
     end_index = start_index + page_size
 
@@ -1046,6 +1053,7 @@ def api_logs():
         "logs": logs_for_page,
         "total": total_records
     })
+
 
 @app.route("/logs/export")
 @requires_auth
